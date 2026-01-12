@@ -360,9 +360,10 @@ namespace IndustrySegSys
                 Margin = new Padding(0, 0, 0, 10)
             };
 
-            var statsPanel = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 3, ColumnCount = 2 };
+            var statsPanel = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 4, ColumnCount = 2 };
             statsPanel.RowStyles.Add(new RowStyle(SizeType.Auto));
             statsPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+            statsPanel.RowStyles.Add(new RowStyle(SizeType.Auto));
             statsPanel.RowStyles.Add(new RowStyle(SizeType.Auto));
             statsPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
             statsPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
@@ -403,7 +404,7 @@ namespace IndustrySegSys
             var infoLabelsPanel = new Panel { Dock = DockStyle.Fill };
             infoLabelsPanel.Controls.Add(currentMaterialLabel);
             infoLabelsPanel.Controls.Add(currentFileLabel);
-            statsPanel.Controls.Add(infoLabelsPanel, 0, 2);
+            statsPanel.Controls.Add(infoLabelsPanel, 0, 3);
             statsPanel.SetColumnSpan(infoLabelsPanel, 2);
 
             statisticsGroupBox.Controls.Add(statsPanel);
