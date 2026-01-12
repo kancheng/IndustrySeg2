@@ -1,0 +1,24 @@
+使用模型: F:\newproj\YoloDotNetDevIndustryTest\test\assets\Models\sd900.onnx
+使用圖片目錄: F:\newproj\YoloDotNetDevIndustryTest\test\assets\Media\sd900
+Loaded ONNX Model: Segmentation (yolo v11)
+
+找到 2 個圖片文件，開始處理...
+================================================================================
+處理: sd900_1.png
+  -> 檢測到 1 個目標，標記為 NG
+  -> 已保存到: C:\Users\Foxconn\Desktop\Industry_Results\sd900_1_NG.png
+
+處理: sd900_2.png
+  -> 未檢測到目標，標記為 OK
+  -> 已保存到: C:\Users\Foxconn\Desktop\Industry_Results\sd900_2_OK.png
+
+================================================================================
+處理完成！
+總共處理: 2 個文件
+NG (檢測到目標): 1 個
+OK (未檢測到目標): 1 個
+結果保存在: C:\Users\Foxconn\Desktop\Industry_Results
+
+F:\newproj\YoloDotNetDevIndustryTest\Demo\SegmentationDemo\bin\Debug\net8.0\SegmentationDemo.exe (进程 24876)已退出，代 码为 0 (0x0)。
+要在调试停止时自动关闭控制台，请启用“工具”->“选项”->“调试”->“调试停止时自动关闭控制台”。
+按任意键关闭此窗口. . .

@@ -1,0 +1,45 @@
+(initpy312) F:\newproj\YoloDotNet>python yolo.py
+Downloading https://github.com/ultralytics/assets/releases/download/v8.3.0/yolo11n.pt to 'yolo11n.pt'...
+100%|██████████████████████████████████████████████████████████████████████████████| 5.35M/5.35M [00:29<00:00, 192kB/s]
+Ultralytics 8.3.140  Python-3.12.9 torch-2.7.0+cu128 CPU (12th Gen Intel Core(TM) i7-12700)
+ ProTip: Export to OpenVINO format for best performance on Intel CPUs. Learn more at https://docs.ultralytics.com/integrations/openvino/
+YOLO11n summary (fused): 100 layers, 2,616,248 parameters, 0 gradients, 6.5 GFLOPs
+
+PyTorch: starting from 'yolo11n.pt' with input shape (1, 3, 640, 640) BCHW and output shape(s) (1, 84, 8400) (5.4 MB)
+requirements: Ultralytics requirements ['onnx>=1.12.0,<1.18.0', 'onnxslim>=0.1.53', 'onnxruntime'] not found, attempting AutoUpdate...
+Using Python 3.12.9 environment at: C:\Users\Foxconn\anaconda3\envs\initpy312
+Resolved 14 packages in 14.19s
+Prepared 8 packages in 5m 01s
+Installed 8 packages in 2.31s
+ + coloredlogs==15.0.1
+ + flatbuffers==25.9.23
+ + humanfriendly==10.0
+ + ml-dtypes==0.5.4
+ + onnx==1.17.0
+ + onnxruntime==1.23.2
+ + onnxslim==0.1.80
+ + pyreadline3==3.5.4
+
+requirements: AutoUpdate success  320.1s
+WARNING requirements: Restart runtime or rerun command for updates to take effect
+
+
+ONNX: starting export with onnx 1.17.0 opset 19...
+ONNX: slimming with onnxslim 0.1.80...
+ONNX: export success  323.6s, saved as 'yolo11n.onnx' (10.2 MB)
+
+Export complete (324.2s)
+Results saved to F:\newproj\YoloDotNet
+Predict:         yolo predict task=detect model=yolo11n.onnx imgsz=640
+Validate:        yolo val task=detect model=yolo11n.onnx imgsz=640 data=/usr/src/ultralytics/ultralytics/cfg/datasets/coco.yaml
+Visualize:       https://netron.app
+WARNING Unable to automatically guess model task, assuming 'task=detect'. Explicitly define task for your model, i.e. 'task=detect', 'segment', 'classify','pose' or 'obb'.
+Loading yolo11n.onnx for ONNX Runtime inference...
+Using ONNX Runtime CPUExecutionProvider
+
+Downloading https://ultralytics.com/images/bus.jpg to 'bus.jpg'...
+100%|████████████████████████████████████████████████████████████████████████████████| 134k/134k [00:00<00:00, 323kB/s]
+image 1/1 F:\newproj\YoloDotNet\bus.jpg: 640x640 4 persons, 1 bus, 747.4ms
+Speed: 5.7ms preprocess, 747.4ms inference, 135.7ms postprocess per image at shape (1, 3, 640, 640)
+
+(initpy312) F:\newproj\YoloDotNet>

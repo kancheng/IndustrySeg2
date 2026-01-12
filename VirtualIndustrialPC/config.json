@@ -1,0 +1,13 @@
+{
+  "num_stations": 3,
+  "images_per_station": 4,
+  "ok_images_path": "ok",
+  "ng_images_path": "ng",
+  "output_path": "lines",
+  "daily_production": 3,
+  "ok_rate": 0.5,
+  "ng_rate": 0.5,
+  "wait_time": 10,
+  "station_interval": 5
+}
+
