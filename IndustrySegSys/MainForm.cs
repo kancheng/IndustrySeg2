@@ -22,6 +22,7 @@ namespace IndustrySegSys
         private SegmentationDrawingOptions _drawingOptions = default!;
         private Bitmap? _currentResultBitmap;
         private List<Bitmap> _resultBitmaps = new List<Bitmap>();
+        private List<string> _resultImagePaths = new List<string>(); // 追蹤每張圖片的輸出路徑
         private int _currentImageIndex = -1;
         private CancellationTokenSource? _cancellationTokenSource;
         private int _totalCount = 0;
@@ -393,6 +394,16 @@ namespace IndustrySegSys
                 
                 // 更新導航
                 UpdateImageNavigation();
+                
+                // 載入並顯示 JSON 資訊
+                if (index < _resultImagePaths.Count)
+                {
+                    LoadAndDisplayJson(_resultImagePaths[index]);
+                }
+                else
+                {
+                    jsonInfoTextBox.Text = "查無該 JSON 訊息";
+                }
             });
         }
         
@@ -1010,6 +1021,18 @@ namespace IndustrySegSys
                             var encodedFormat = GetEncodedFormat(fileExtension);
                             image.Save(outputPath, encodedFormat, 80);
                             
+                            // 保存 JSON 檔案（如果啟用）
+                            bool shouldGenerateJson = false;
+                            InvokeUI(() =>
+                            {
+                                shouldGenerateJson = generateJsonRadio.Checked;
+                            });
+                            
+                            if (shouldGenerateJson)
+                            {
+                                SaveJsonFile(outputPath, "監控模式", confidence, pixelConfidence, iou, results);
+                            }
+                            
                             Interlocked.Increment(ref _totalCount);
                             
                             // 轉換為 Bitmap 並更新顯示
@@ -1017,6 +1040,7 @@ namespace IndustrySegSys
                             InvokeUI(() =>
                             {
                                 _resultBitmaps.Add(bitmap);
+                                _resultImagePaths.Add(outputPath);
                                 _currentImageIndex = _resultBitmaps.Count - 1;
                                 ShowImageAtIndex(_currentImageIndex);
                                 processingSpeedLabel.Text = $"處理速度: {processingTime} ms";
@@ -1691,11 +1715,24 @@ namespace IndustrySegSys
                     var encodedFormat = GetEncodedFormat(fileExtension);
                     image.Save(outputPath, encodedFormat, 80);
                     
+                    // 保存 JSON 檔案（如果啟用）
+                    bool shouldGenerateJson = false;
+                    InvokeUI(() =>
+                    {
+                        shouldGenerateJson = generateJsonRadio.Checked;
+                    });
+                    
+                    if (shouldGenerateJson)
+                    {
+                        SaveJsonFile(outputPath, "手動模式-單文件", confidence, pixelConfidence, iou, results);
+                    }
+                    
                     // 轉換為 Bitmap 並更新顯示
                     var bitmap = SKBitmapToBitmap(image);
                     InvokeUI(() =>
                     {
                         _resultBitmaps.Add(bitmap);
+                        _resultImagePaths.Add(outputPath);
                         _currentImageIndex = _resultBitmaps.Count - 1;
                         ShowImageAtIndex(_currentImageIndex);
                         processingSpeedLabel.Text = $"處理速度: {processingTime} ms";
@@ -1822,6 +1859,18 @@ namespace IndustrySegSys
                         var encodedFormat = GetEncodedFormat(fileExtension);
                         image.Save(outputPath, encodedFormat, 80);
                         
+                        // 保存 JSON 檔案（如果啟用）
+                        bool shouldGenerateJson = false;
+                        InvokeUI(() =>
+                        {
+                            shouldGenerateJson = generateJsonRadio.Checked;
+                        });
+                        
+                        if (shouldGenerateJson)
+                        {
+                            SaveJsonFile(outputPath, "手動模式-批量處理", confidence, pixelConfidence, iou, results);
+                        }
+                        
                         processedCount++;
                         
                         // 轉換為 Bitmap 並更新顯示
@@ -1829,6 +1878,7 @@ namespace IndustrySegSys
                         InvokeUI(() =>
                         {
                             _resultBitmaps.Add(bitmap);
+                            _resultImagePaths.Add(outputPath);
                             _currentImageIndex = _resultBitmaps.Count - 1;
                             ShowImageAtIndex(_currentImageIndex);
                             processingSpeedLabel.Text = $"處理速度: {processingTime} ms";
@@ -1877,6 +1927,7 @@ namespace IndustrySegSys
                 catch { }
             }
             _resultBitmaps.Clear();
+            _resultImagePaths.Clear();
             _currentImageIndex = -1;
             
             InvokeUI(() =>
@@ -1884,7 +1935,108 @@ namespace IndustrySegSys
                 resultPictureBox.Image = null;
                 noImageLabel.Visible = true;
                 imageControlPanel.Visible = false;
+                jsonInfoTextBox.Text = "查無該 JSON 訊息";
             });
+        }
+        
+        // ========== JSON 相關方法 ==========
+        
+        private class DetectionResultJson
+        {
+            public string Mode { get; set; } = string.Empty;
+            public double Confidence { get; set; }
+            public double PixelConfidence { get; set; }
+            public double IoU { get; set; }
+            public int DetectionCount { get; set; }
+            public List<DetectionInfo> Detections { get; set; } = new List<DetectionInfo>();
+        }
+        
+        private class DetectionInfo
+        {
+            public string Label { get; set; } = string.Empty;
+            public double Confidence { get; set; }
+        }
+        
+        private void SaveJsonFile(string imageOutputPath, string mode, double confidence, double pixelConfidence, double iou, List<YoloDotNet.Models.Segmentation> results)
+        {
+            try
+            {
+                var jsonPath = Path.ChangeExtension(imageOutputPath, ".json");
+                var jsonData = new DetectionResultJson
+                {
+                    Mode = mode,
+                    Confidence = confidence,
+                    PixelConfidence = pixelConfidence,
+                    IoU = iou,
+                    DetectionCount = results.Count,
+                    Detections = results.Select(r => new DetectionInfo
+                    {
+                        Label = r.Label.Name,
+                        Confidence = r.Confidence
+                    }).ToList()
+                };
+                
+                var options = new JsonSerializerOptions { WriteIndented = true };
+                var jsonContent = JsonSerializer.Serialize(jsonData, options);
+                File.WriteAllText(jsonPath, jsonContent);
+            }
+            catch (Exception ex)
+            {
+                InvokeUI(() =>
+                {
+                    AddLog($"保存 JSON 檔案失敗: {ex.Message}");
+                });
+            }
+        }
+        
+        private void LoadAndDisplayJson(string imagePath)
+        {
+            try
+            {
+                var jsonPath = Path.ChangeExtension(imagePath, ".json");
+                if (File.Exists(jsonPath))
+                {
+                    var jsonContent = File.ReadAllText(jsonPath);
+                    var jsonData = JsonSerializer.Deserialize<DetectionResultJson>(jsonContent);
+                    
+                    if (jsonData != null)
+                    {
+                        var displayText = $"模式: {jsonData.Mode}\r\n";
+                        displayText += $"Confidence: {jsonData.Confidence:F2}\r\n";
+                        displayText += $"Pixel Confidence: {jsonData.PixelConfidence:F2}\r\n";
+                        displayText += $"IoU: {jsonData.IoU:F2}\r\n";
+                        displayText += $"檢測目標數: {jsonData.DetectionCount}\r\n";
+                        
+                        if (jsonData.DetectionCount > 0)
+                        {
+                            displayText += $"\r\n瑕疵資訊:\r\n";
+                            for (int i = 0; i < jsonData.Detections.Count; i++)
+                            {
+                                var det = jsonData.Detections[i];
+                                displayText += $"  {i + 1}. {det.Label} (Confidence: {det.Confidence:F2})\r\n";
+                            }
+                        }
+                        else
+                        {
+                            displayText += "\r\n未檢測到瑕疵";
+                        }
+                        
+                        jsonInfoTextBox.Text = displayText;
+                    }
+                    else
+                    {
+                        jsonInfoTextBox.Text = "查無該 JSON 訊息";
+                    }
+                }
+                else
+                {
+                    jsonInfoTextBox.Text = "查無該 JSON 訊息";
+                }
+            }
+            catch (Exception ex)
+            {
+                jsonInfoTextBox.Text = $"讀取 JSON 失敗: {ex.Message}";
+            }
         }
         
         protected override void OnFormClosing(FormClosingEventArgs e)

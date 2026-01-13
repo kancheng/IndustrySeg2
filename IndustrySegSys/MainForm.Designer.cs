@@ -28,6 +28,8 @@ namespace IndustrySegSys
         private Label pixelConfidenceValueLabel;
         private TrackBar iouTrackBar;
         private Label iouValueLabel;
+        private RadioButton generateJsonRadio;
+        private RadioButton noJsonRadio;
 
         // 控制按鈕
         private Button startMonitorButton;
@@ -63,6 +65,8 @@ namespace IndustrySegSys
         private Label processingSpeedLabel;
         private GroupBox logGroupBox;
         private TextBox logTextBox;
+        private GroupBox jsonInfoGroupBox;
+        private TextBox jsonInfoTextBox;
 
         // 狀態欄
         private StatusStrip statusStrip;
@@ -376,6 +380,10 @@ namespace IndustrySegSys
             openOutputFolderButton = new Button { Text = "打開輸出文件夾", Width = 150, Height = 35, Font = new Font("Microsoft Sans Serif", 9F) };
             openOutputFolderButton.Click += OpenOutputFolderButton_Click;
 
+            // JSON 產生選項
+            generateJsonRadio = new RadioButton { Text = "產生 JSON", Checked = true, AutoSize = true, Font = new Font("Microsoft Sans Serif", 9F) };
+            noJsonRadio = new RadioButton { Text = "不產生 JSON", AutoSize = true, Font = new Font("Microsoft Sans Serif", 9F) };
+
             buttonPanel.Controls.Add(startMonitorButton);
             buttonPanel.Controls.Add(stopMonitorButton);
             buttonPanel.Controls.Add(startButton);
@@ -383,6 +391,10 @@ namespace IndustrySegSys
             buttonPanel.Controls.Add(processSingleFileButton);
             buttonPanel.Controls.Add(processBatchButton);
             buttonPanel.Controls.Add(openOutputFolderButton);
+            buttonPanel.Controls.Add(new Label { Width = 20 });  // 間距
+            buttonPanel.Controls.Add(new Label { Text = "JSON 選項:", AutoSize = true, Font = new Font("Microsoft Sans Serif", 9F), Padding = new Padding(0, 8, 0, 0) });
+            buttonPanel.Controls.Add(generateJsonRadio);
+            buttonPanel.Controls.Add(noJsonRadio);
 
             this.Controls.Add(buttonPanel);
         }
@@ -475,8 +487,9 @@ namespace IndustrySegSys
             var infoPanel = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
-                RowCount = 3
+                RowCount = 4
             };
+            infoPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             infoPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             infoPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             infoPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
@@ -561,6 +574,30 @@ namespace IndustrySegSys
             progressGroupBox.Controls.Add(progressPanel);
             infoPanel.Controls.Add(progressGroupBox, 0, 1);
 
+            // JSON 資訊顯示
+            jsonInfoGroupBox = new GroupBox
+            {
+                Text = "JSON 資訊",
+                Dock = DockStyle.Fill,
+                Padding = new Padding(5),
+                Margin = new Padding(0, 0, 0, 10)
+            };
+
+            jsonInfoTextBox = new TextBox
+            {
+                Multiline = true,
+                ReadOnly = true,
+                Dock = DockStyle.Fill,
+                ScrollBars = ScrollBars.Vertical,
+                Font = new Font("Consolas", 9F),
+                BackColor = Color.FromArgb(250, 250, 250),
+                ForeColor = Color.FromArgb(50, 50, 50),
+                Text = "查無該 JSON 訊息"
+            };
+
+            jsonInfoGroupBox.Controls.Add(jsonInfoTextBox);
+            infoPanel.Controls.Add(jsonInfoGroupBox, 0, 2);
+
             // 日誌
             logGroupBox = new GroupBox
             {
@@ -580,7 +617,7 @@ namespace IndustrySegSys
             };
 
             logGroupBox.Controls.Add(logTextBox);
-            infoPanel.Controls.Add(logGroupBox, 0, 2);
+            infoPanel.Controls.Add(logGroupBox, 0, 3);
 
             mainContentPanel.Controls.Add(infoPanel, 2, 0);
 
