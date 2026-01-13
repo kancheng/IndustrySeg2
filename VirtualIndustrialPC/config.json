@@ -1,5 +1,5 @@
 {
-  "num_stations": 3,
+  "num_stations": 1,
   "images_per_station": 8,
   "ok_images_path": "ok",
   "ng_images_path": "ng",

@@ -18,10 +18,10 @@ namespace IndustrySegSys
         private RadioButton monitorModeRadio;
         private RadioButton manualModeRadio;
         private Panel manualImagePanel;
-        private TextBox imagePathTextBox;
-        private Button browseImageButton;
-        private RadioButton singleFileRadio;
-        private RadioButton batchFileRadio;
+        private TextBox singleFileTextBox;
+        private Button browseSingleFileButton;
+        private TextBox batchFileTextBox;
+        private Button browseBatchFileButton;
         private TrackBar confidenceTrackBar;
         private Label confidenceValueLabel;
         private TrackBar pixelConfidenceTrackBar;
@@ -109,102 +109,232 @@ namespace IndustrySegSys
 
         private void CreateConfigPanel()
         {
+            // 統一的尺寸常量
+            const int LABEL_WIDTH = 110;           // 標籤寬度
+            const int BUTTON_WIDTH = 80;           // 按鈕寬度
+            const int TEXTBOX_MIN_WIDTH = 200;     // TextBox 最小寬度
+            const int TRACKBAR_WIDTH = 150;        // TrackBar 寬度
+            const int VALUE_LABEL_WIDTH = 50;      // 數值標籤寬度
+            const int ROW_MARGIN_TOP = 8;          // 行間距
+            const int PARAM_SPACING = 25;          // 參數間距
+
             configGroupBox = new GroupBox
             {
                 Text = "配置",
                 Dock = DockStyle.Top,
-                Padding = new Padding(10),
-                Height = 200
+                Padding = new Padding(12),
+                Height = 250
             };
 
             var configTable = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
                 ColumnCount = 2,
-                RowCount = 4
+                RowCount = 4,
+                AutoSize = true
             };
             configTable.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
             configTable.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
+            configTable.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            configTable.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            configTable.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            configTable.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+
+            // 創建統一的標籤樣式
+            Label CreateLabel(string text) => new Label 
+            { 
+                Text = text, 
+                Width = LABEL_WIDTH, 
+                AutoSize = false, 
+                TextAlign = ContentAlignment.MiddleLeft,
+                Padding = new Padding(0, 2, 0, 0)  // 微調垂直對齊
+            };
+
+            // 創建統一的 TextBox 樣式
+            TextBox CreateTextBox() => new TextBox 
+            { 
+                ReadOnly = true, 
+                MinimumSize = new Size(TEXTBOX_MIN_WIDTH, 0),
+                Anchor = AnchorStyles.Left | AnchorStyles.Right
+            };
+
+            // 創建統一的按鈕樣式
+            Button CreateBrowseButton() => new Button 
+            { 
+                Text = "瀏覽...", 
+                Width = BUTTON_WIDTH,
+                Height = 23,  // 統一按鈕高度
+                Anchor = AnchorStyles.Left
+            };
+
+            // 創建統一的 FlowLayoutPanel 樣式
+            FlowLayoutPanel CreateFlowPanel() => new FlowLayoutPanel 
+            { 
+                Dock = DockStyle.Fill, 
+                FlowDirection = FlowDirection.LeftToRight, 
+                Margin = new Padding(0, ROW_MARGIN_TOP, 0, 0),
+                WrapContents = false,
+                AutoSize = true
+            };
 
             // 第一行：模型文件和監控目錄
-            modelPathTextBox = new TextBox { Dock = DockStyle.Fill, ReadOnly = true };
-            browseModelButton = new Button { Text = "瀏覽...", Width = 80, Anchor = AnchorStyles.Left };
+            modelPathTextBox = CreateTextBox();
+            browseModelButton = CreateBrowseButton();
             browseModelButton.Click += BrowseModelButton_Click;
 
-            var modelPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, Margin = new Padding(0, 5, 0, 5) };
-            modelPanel.Controls.Add(new Label { Text = "模型文件:", Width = 100, AutoSize = false, TextAlign = ContentAlignment.MiddleLeft });
+            var modelPanel = CreateFlowPanel();
+            modelPanel.Controls.Add(CreateLabel("模型文件:"));
             modelPanel.Controls.Add(modelPathTextBox);
             modelPanel.Controls.Add(browseModelButton);
             configTable.Controls.Add(modelPanel, 0, 0);
 
-            watchPathTextBox = new TextBox { Dock = DockStyle.Fill, ReadOnly = true };
-            browseWatchPathButton = new Button { Text = "瀏覽...", Width = 80, Anchor = AnchorStyles.Left };
+            watchPathTextBox = CreateTextBox();
+            browseWatchPathButton = CreateBrowseButton();
             browseWatchPathButton.Click += BrowseWatchPathButton_Click;
 
-            var watchPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, Margin = new Padding(0, 5, 0, 5) };
-            watchPanel.Controls.Add(new Label { Text = "監控目錄:", Width = 100, AutoSize = false, TextAlign = ContentAlignment.MiddleLeft });
+            var watchPanel = CreateFlowPanel();
+            watchPanel.Controls.Add(CreateLabel("監控目錄:"));
             watchPanel.Controls.Add(watchPathTextBox);
             watchPanel.Controls.Add(browseWatchPathButton);
             configTable.Controls.Add(watchPanel, 1, 0);
 
             // 第二行：輸出目錄和工作模式
-            outputPathTextBox = new TextBox { Dock = DockStyle.Fill, ReadOnly = true };
-            browseOutputButton = new Button { Text = "瀏覽...", Width = 80, Anchor = AnchorStyles.Left };
+            outputPathTextBox = CreateTextBox();
+            browseOutputButton = CreateBrowseButton();
             browseOutputButton.Click += BrowseOutputButton_Click;
 
-            var outputPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, Margin = new Padding(0, 5, 0, 5) };
-            outputPanel.Controls.Add(new Label { Text = "輸出目錄:", Width = 100, AutoSize = false, TextAlign = ContentAlignment.MiddleLeft });
+            var outputPanel = CreateFlowPanel();
+            outputPanel.Controls.Add(CreateLabel("輸出目錄:"));
             outputPanel.Controls.Add(outputPathTextBox);
             outputPanel.Controls.Add(browseOutputButton);
             configTable.Controls.Add(outputPanel, 0, 1);
 
-            monitorModeRadio = new RadioButton { Text = "自動監控模式", Checked = true };
-            manualModeRadio = new RadioButton { Text = "手動處理模式" };
+            monitorModeRadio = new RadioButton { Text = "自動監控模式", Checked = true, AutoSize = true };
+            manualModeRadio = new RadioButton { Text = "手動處理模式", AutoSize = true };
 
-            var modePanel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, Margin = new Padding(0, 5, 0, 5) };
-            modePanel.Controls.Add(new Label { Text = "工作模式:", Width = 100, AutoSize = false, TextAlign = ContentAlignment.MiddleLeft });
+            var modePanel = CreateFlowPanel();
+            modePanel.Controls.Add(CreateLabel("工作模式:"));
             modePanel.Controls.Add(monitorModeRadio);
+            modePanel.Controls.Add(new Label { Width = 15 });  // 間距
             modePanel.Controls.Add(manualModeRadio);
             configTable.Controls.Add(modePanel, 1, 1);
 
             // 第三行：手動模式圖片選擇（初始隱藏）
-            manualImagePanel = new Panel { Dock = DockStyle.Fill, Visible = false };
-            imagePathTextBox = new TextBox { Dock = DockStyle.Fill, ReadOnly = true };
-            browseImageButton = new Button { Text = "瀏覽...", Width = 80, Anchor = AnchorStyles.Left };
-            browseImageButton.Click += BrowseImageButton_Click;
-            singleFileRadio = new RadioButton { Text = "單文件", Checked = true };
-            batchFileRadio = new RadioButton { Text = "批量處理" };
-
-            var imagePanel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, Margin = new Padding(0, 5, 0, 5) };
-            imagePanel.Controls.Add(new Label { Text = "圖片路徑:", Width = 100, AutoSize = false, TextAlign = ContentAlignment.MiddleLeft });
-            imagePanel.Controls.Add(imagePathTextBox);
-            imagePanel.Controls.Add(browseImageButton);
-            imagePanel.Controls.Add(new Label { Text = "處理模式:", Width = 100, AutoSize = false, TextAlign = ContentAlignment.MiddleLeft, Margin = new Padding(20, 0, 0, 0) });
-            imagePanel.Controls.Add(singleFileRadio);
-            imagePanel.Controls.Add(batchFileRadio);
-            manualImagePanel.Controls.Add(imagePanel);
+            manualImagePanel = new Panel { Dock = DockStyle.Fill, Visible = false, MinimumSize = new Size(0, 90) };
+            
+            var manualImageTable = new TableLayoutPanel 
+            { 
+                Dock = DockStyle.Fill, 
+                RowCount = 2, 
+                ColumnCount = 1,
+                AutoSize = true
+            };
+            manualImageTable.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            manualImageTable.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            
+            // 單文件路徑
+            singleFileTextBox = CreateTextBox();
+            browseSingleFileButton = CreateBrowseButton();
+            browseSingleFileButton.Click += BrowseSingleFileButton_Click;
+            
+            var singleFilePanel = CreateFlowPanel();
+            singleFilePanel.Margin = new Padding(0, ROW_MARGIN_TOP, 0, 0);
+            singleFilePanel.Controls.Add(CreateLabel("單文件路徑:"));
+            singleFilePanel.Controls.Add(singleFileTextBox);
+            singleFilePanel.Controls.Add(browseSingleFileButton);
+            manualImageTable.Controls.Add(singleFilePanel, 0, 0);
+            
+            // 批量處理路徑
+            batchFileTextBox = CreateTextBox();
+            browseBatchFileButton = CreateBrowseButton();
+            browseBatchFileButton.Click += BrowseBatchFileButton_Click;
+            
+            var batchFilePanel = CreateFlowPanel();
+            batchFilePanel.Margin = new Padding(0, ROW_MARGIN_TOP, 0, 0);
+            batchFilePanel.Controls.Add(CreateLabel("批量處理目錄:"));
+            batchFilePanel.Controls.Add(batchFileTextBox);
+            batchFilePanel.Controls.Add(browseBatchFileButton);
+            manualImageTable.Controls.Add(batchFilePanel, 0, 1);
+            
+            manualImagePanel.Controls.Add(manualImageTable);
             configTable.Controls.Add(manualImagePanel, 0, 2);
             configTable.SetColumnSpan(manualImagePanel, 2);
 
             // 第四行：參數設置
-            var paramPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, Margin = new Padding(0, 10, 0, 0) };
+            var paramPanel = new FlowLayoutPanel 
+            { 
+                Dock = DockStyle.Fill, 
+                FlowDirection = FlowDirection.LeftToRight, 
+                Margin = new Padding(0, ROW_MARGIN_TOP + 5, 0, 0),
+                WrapContents = false,
+                AutoSize = true
+            };
 
-            confidenceTrackBar = new TrackBar { Minimum = 10, Maximum = 100, Value = 24, Width = 150, TickFrequency = 10 };
-            confidenceValueLabel = new Label { Text = "0.24", Width = 50, TextAlign = ContentAlignment.MiddleLeft };
+            confidenceTrackBar = new TrackBar 
+            { 
+                Minimum = 10, 
+                Maximum = 100, 
+                Value = 24, 
+                Width = TRACKBAR_WIDTH, 
+                TickFrequency = 10,
+                AutoSize = false
+            };
+            confidenceValueLabel = new Label 
+            { 
+                Text = "0.24", 
+                Width = VALUE_LABEL_WIDTH, 
+                TextAlign = ContentAlignment.MiddleLeft,
+                Padding = new Padding(5, 2, 0, 0)
+            };
 
-            pixelConfidenceTrackBar = new TrackBar { Minimum = 10, Maximum = 100, Value = 50, Width = 150, TickFrequency = 10 };
-            pixelConfidenceValueLabel = new Label { Text = "0.50", Width = 50, TextAlign = ContentAlignment.MiddleLeft };
+            pixelConfidenceTrackBar = new TrackBar 
+            { 
+                Minimum = 10, 
+                Maximum = 100, 
+                Value = 50, 
+                Width = TRACKBAR_WIDTH, 
+                TickFrequency = 10,
+                AutoSize = false
+            };
+            pixelConfidenceValueLabel = new Label 
+            { 
+                Text = "0.50", 
+                Width = VALUE_LABEL_WIDTH, 
+                TextAlign = ContentAlignment.MiddleLeft,
+                Padding = new Padding(5, 2, 0, 0)
+            };
 
-            iouTrackBar = new TrackBar { Minimum = 10, Maximum = 100, Value = 70, Width = 150, TickFrequency = 10 };
-            iouValueLabel = new Label { Text = "0.70", Width = 50, TextAlign = ContentAlignment.MiddleLeft };
+            iouTrackBar = new TrackBar 
+            { 
+                Minimum = 10, 
+                Maximum = 100, 
+                Value = 70, 
+                Width = TRACKBAR_WIDTH, 
+                TickFrequency = 10,
+                AutoSize = false
+            };
+            iouValueLabel = new Label 
+            { 
+                Text = "0.70", 
+                Width = VALUE_LABEL_WIDTH, 
+                TextAlign = ContentAlignment.MiddleLeft,
+                Padding = new Padding(5, 2, 0, 0)
+            };
 
-            paramPanel.Controls.Add(new Label { Text = "Confidence:", Width = 100, AutoSize = false, TextAlign = ContentAlignment.MiddleLeft });
+            // 參數標籤統一寬度
+            paramPanel.Controls.Add(CreateLabel("Confidence:"));
             paramPanel.Controls.Add(confidenceTrackBar);
             paramPanel.Controls.Add(confidenceValueLabel);
-            paramPanel.Controls.Add(new Label { Text = "Pixel Confidence:", Width = 120, AutoSize = false, TextAlign = ContentAlignment.MiddleLeft, Margin = new Padding(20, 0, 0, 0) });
+            
+            paramPanel.Controls.Add(new Label { Width = PARAM_SPACING });  // 間距
+            
+            paramPanel.Controls.Add(CreateLabel("Pixel Confidence:"));
             paramPanel.Controls.Add(pixelConfidenceTrackBar);
             paramPanel.Controls.Add(pixelConfidenceValueLabel);
-            paramPanel.Controls.Add(new Label { Text = "IoU:", Width = 50, AutoSize = false, TextAlign = ContentAlignment.MiddleLeft, Margin = new Padding(20, 0, 0, 0) });
+            
+            paramPanel.Controls.Add(new Label { Width = PARAM_SPACING });  // 間距
+            
+            paramPanel.Controls.Add(CreateLabel("IoU:"));
             paramPanel.Controls.Add(iouTrackBar);
             paramPanel.Controls.Add(iouValueLabel);
 
@@ -232,7 +362,7 @@ namespace IndustrySegSys
             stopMonitorButton.Click += StopMonitorButton_Click;
 
             startButton = new Button { Text = "開始檢測", Width = 120, Height = 35, Visible = false, Font = new Font("Microsoft Sans Serif", 9F) };
-            startButton.Click += StartButton_Click;
+            // StartButton 已移除，現在使用獨立的處理按鈕
 
             stopButton = new Button { Text = "停止檢測", Width = 120, Height = 35, Visible = false, Enabled = false, Font = new Font("Microsoft Sans Serif", 9F) };
             stopButton.Click += StopButton_Click;

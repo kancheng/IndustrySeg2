@@ -41,6 +41,28 @@ namespace IndustrySegSys
             InitializeDrawingOptions();
             InitializeDefaultPaths();
             SetupEventHandlers();
+            
+            // 初始化時設置控件可見性（根據默認選中的監控模式）
+            // 手動觸發一次事件以確保控件狀態正確
+            AddLog("初始化完成，當前模式: " + (monitorModeRadio.Checked ? "監控模式" : "手動模式"));
+            
+            // 測試：直接設置手動模式控件可見性
+            AddLog($"測試 - manualImagePanel 初始狀態: Visible={manualImagePanel.Visible}, Parent={manualImagePanel.Parent?.GetType().Name ?? "null"}");
+            AddLog($"測試 - processSingleFileButton 初始狀態: Visible={processSingleFileButton.Visible}, Parent={processSingleFileButton.Parent?.GetType().Name ?? "null"}");
+            AddLog($"測試 - progressGroupBox 初始狀態: Visible={progressGroupBox.Visible}, Parent={progressGroupBox.Parent?.GetType().Name ?? "null"}");
+            
+            if (monitorModeRadio.Checked)
+            {
+                // 觸發監控模式的事件處理
+                monitorModeRadio.Checked = false;
+                monitorModeRadio.Checked = true;
+            }
+            else if (manualModeRadio.Checked)
+            {
+                // 觸發手動模式的事件處理
+                manualModeRadio.Checked = false;
+                manualModeRadio.Checked = true;
+            }
         }
         
         private void InitializeDrawingOptions()
@@ -96,48 +118,160 @@ namespace IndustrySegSys
                 }
             };
             
-            manualModeRadio.CheckedChanged += (s, e) =>
+            manualModeRadio.CheckedChanged += ManualModeRadio_CheckedChanged;
+            
+            // 監聽單文件路徑 TextBox 的文本變化
+            singleFileTextBox.TextChanged += (s, e) =>
             {
                 if (manualModeRadio.Checked)
                 {
+                    UpdateProcessButtonStates();
+                }
+            };
+            
+            // 監聽批量處理路徑 TextBox 的文本變化
+            batchFileTextBox.TextChanged += (s, e) =>
+            {
+                if (manualModeRadio.Checked)
+                {
+                    UpdateProcessButtonStates();
+                }
+            };
+            
+            // 監聽模型路徑 TextBox 的文本變化
+            modelPathTextBox.TextChanged += (s, e) =>
+            {
+                if (manualModeRadio.Checked)
+                {
+                    UpdateProcessButtonStates();
+                }
+            };
+            
+            // 監聽輸出目錄 TextBox 的文本變化
+            outputPathTextBox.TextChanged += (s, e) =>
+            {
+                if (manualModeRadio.Checked)
+                {
+                    UpdateProcessButtonStates();
+                }
+            };
+        }
+        
+        private void ManualModeRadio_CheckedChanged(object sender, EventArgs e)
+        {
+            AddLog($"=== ManualModeRadio_CheckedChanged 觸發 ===");
+            AddLog($"Checked = {manualModeRadio.Checked}");
+            AddLog($"manualImagePanel 存在: {manualImagePanel != null}");
+            AddLog($"processSingleFileButton 存在: {processSingleFileButton != null}");
+            AddLog($"processBatchButton 存在: {processBatchButton != null}");
+            AddLog($"progressGroupBox 存在: {progressGroupBox != null}");
+            
+            if (manualModeRadio.Checked)
+            {
+                AddLog("開始設置手動模式控件可見性");
+                
+                try
+                {
                     manualImagePanel.Visible = true;
+                    AddLog($"✓ manualImagePanel.Visible = {manualImagePanel.Visible}");
+                    AddLog($"✓ manualImagePanel.Controls.Count = {manualImagePanel.Controls.Count}");
+                    
+                    // 檢查 manualImageTable 的內容
+                    if (manualImagePanel.Controls.Count > 0 && manualImagePanel.Controls[0] is TableLayoutPanel manualImageTable)
+                    {
+                        AddLog($"✓ manualImageTable.RowCount = {manualImageTable.RowCount}");
+                        AddLog($"✓ manualImageTable.Controls.Count = {manualImageTable.Controls.Count}");
+                        for (int i = 0; i < manualImageTable.Controls.Count; i++)
+                        {
+                            var ctrl = manualImageTable.Controls[i];
+                            AddLog($"  - Control[{i}]: {ctrl.GetType().Name}, Visible={ctrl.Visible}");
+                        }
+                    }
+                    
                     startMonitorButton.Visible = false;
                     stopMonitorButton.Visible = false;
                     startButton.Visible = false;
                     stopButton.Visible = true;
+                    AddLog($"✓ stopButton.Visible = {stopButton.Visible}");
+                    
                     processSingleFileButton.Visible = true;
+                    AddLog($"✓ processSingleFileButton.Visible = {processSingleFileButton.Visible}");
+                    
                     processBatchButton.Visible = true;
+                    AddLog($"✓ processBatchButton.Visible = {processBatchButton.Visible}");
+                    
                     progressGroupBox.Visible = true;
+                    AddLog($"✓ progressGroupBox.Visible = {progressGroupBox.Visible}");
+                    
                     UpdateProcessButtonStates();
-                }
-            };
-            
-            // 單文件/批量處理模式切換
-            singleFileRadio.CheckedChanged += (s, e) =>
-            {
-                if (singleFileRadio.Checked)
-                {
-                    UpdateProcessButtonStates();
-                    if (!string.IsNullOrWhiteSpace(imagePathTextBox.Text) && Directory.Exists(imagePathTextBox.Text))
+                    
+                    // 先調整 configGroupBox 高度（在刷新之前）
+                    if (configGroupBox != null)
                     {
-                        imagePathTextBox.Text = string.Empty;
-                        SavePathsToConfig();
+                        configGroupBox.Height = 320;  // 增加高度以顯示手動模式控件
+                        AddLog($"✓ 調整 configGroupBox.Height = {configGroupBox.Height}");
                     }
-                }
-            };
-            
-            batchFileRadio.CheckedChanged += (s, e) =>
-            {
-                if (batchFileRadio.Checked)
-                {
-                    UpdateProcessButtonStates();
-                    if (!string.IsNullOrWhiteSpace(imagePathTextBox.Text) && File.Exists(imagePathTextBox.Text))
+                    
+                    // 強制刷新所有父容器
+                    if (manualImagePanel.Parent != null)
                     {
-                        imagePathTextBox.Text = string.Empty;
-                        SavePathsToConfig();
+                        // 如果父容器是 TableLayoutPanel，強制重新計算布局
+                        if (manualImagePanel.Parent is TableLayoutPanel parentTable)
+                        {
+                            parentTable.PerformLayout();
+                            AddLog($"✓ 執行 parentTable.PerformLayout()");
+                        }
+                        
+                        manualImagePanel.Parent.Invalidate();
+                        manualImagePanel.Parent.Update();
+                        AddLog($"✓ 刷新 manualImagePanel.Parent: {manualImagePanel.Parent.GetType().Name}");
                     }
+                    
+                    // 刷新 configGroupBox
+                    if (configGroupBox != null)
+                    {
+                        configGroupBox.Invalidate();
+                        configGroupBox.Update();
+                        configGroupBox.PerformLayout();
+                        AddLog($"✓ 刷新 configGroupBox");
+                    }
+                    
+                    if (processSingleFileButton.Parent != null)
+                    {
+                        processSingleFileButton.Parent.Invalidate();
+                        processSingleFileButton.Parent.Update();
+                        AddLog($"✓ 刷新 processSingleFileButton.Parent: {processSingleFileButton.Parent.GetType().Name}");
+                    }
+                    
+                    if (progressGroupBox.Parent != null)
+                    {
+                        progressGroupBox.Parent.Invalidate();
+                        progressGroupBox.Parent.Update();
+                        AddLog($"✓ 刷新 progressGroupBox.Parent: {progressGroupBox.Parent.GetType().Name}");
+                    }
+                    
+                    this.Invalidate();
+                    this.Update();
+                    this.Refresh();
+                    this.PerformLayout();
+                    
+                    AddLog("=== 已切換到手動處理模式 - 所有控件已顯示 ===");
                 }
-            };
+                catch (Exception ex)
+                {
+                    AddLog($"錯誤: {ex.Message}");
+                    AddLog($"堆棧: {ex.StackTrace}");
+                }
+            }
+            else
+            {
+                // 當切換到監控模式時，隱藏手動模式的控件
+                manualImagePanel.Visible = false;
+                processSingleFileButton.Visible = false;
+                processBatchButton.Visible = false;
+                progressGroupBox.Visible = false;
+                AddLog("已切換回監控模式");
+            }
         }
         
         // ========== 線程安全更新方法 ==========
@@ -387,85 +521,81 @@ namespace IndustrySegSys
             }
         }
         
-        private void BrowseImageButton_Click(object sender, EventArgs e)
+        private void BrowseSingleFileButton_Click(object sender, EventArgs e)
         {
-            if (singleFileRadio.Checked)
+            using (var dialog = new OpenFileDialog())
             {
-                using (var dialog = new OpenFileDialog())
+                dialog.Filter = "圖片文件 (*.jpg;*.jpeg;*.png;*.bmp;*.gif)|*.jpg;*.jpeg;*.png;*.bmp;*.gif|所有文件 (*.*)|*.*";
+                dialog.Title = "選擇圖片文件";
+                
+                // 設置初始目錄：如果 TextBox 有路徑，使用其目錄；否則使用項目下的 VirtualIndustrialPC
+                if (!string.IsNullOrWhiteSpace(singleFileTextBox.Text) && File.Exists(singleFileTextBox.Text))
                 {
-                    dialog.Filter = "圖片文件 (*.jpg;*.jpeg;*.png;*.bmp;*.gif)|*.jpg;*.jpeg;*.png;*.bmp;*.gif|所有文件 (*.*)|*.*";
-                    dialog.Title = "選擇圖片文件";
-                    
-                    // 設置初始目錄：如果 TextBox 有路徑，使用其目錄；否則使用項目下的 VirtualIndustrialPC
-                    if (!string.IsNullOrWhiteSpace(imagePathTextBox.Text) && File.Exists(imagePathTextBox.Text))
+                    dialog.InitialDirectory = Path.GetDirectoryName(singleFileTextBox.Text);
+                }
+                else
+                {
+                    var currentDir = new DirectoryInfo(Directory.GetCurrentDirectory());
+                    var projectRoot = FindProjectRoot(currentDir);
+                    if (projectRoot != null)
                     {
-                        dialog.InitialDirectory = Path.GetDirectoryName(imagePathTextBox.Text);
-                    }
-                    else
-                    {
-                        var currentDir = new DirectoryInfo(Directory.GetCurrentDirectory());
-                        var projectRoot = FindProjectRoot(currentDir);
-                        if (projectRoot != null)
+                        var imageDir = Path.Combine(projectRoot, "VirtualIndustrialPC");
+                        if (Directory.Exists(imageDir))
                         {
-                            var imageDir = Path.Combine(projectRoot, "VirtualIndustrialPC");
-                            if (Directory.Exists(imageDir))
-                            {
-                                dialog.InitialDirectory = imageDir;
-                            }
-                            else
-                            {
-                                dialog.InitialDirectory = projectRoot;
-                            }
+                            dialog.InitialDirectory = imageDir;
                         }
-                    }
-                    
-                    if (dialog.ShowDialog() == DialogResult.OK)
-                    {
-                        imagePathTextBox.Text = dialog.FileName;
-                        singleFileRadio.Checked = true;
-                        AddLog($"已選擇圖片: {dialog.FileName}");
-                        SavePathsToConfig();
-                        UpdateProcessButtonStates();
+                        else
+                        {
+                            dialog.InitialDirectory = projectRoot;
+                        }
                     }
                 }
-            }
-            else
-            {
-                using (var dialog = new FolderBrowserDialog())
+                
+                if (dialog.ShowDialog() == DialogResult.OK)
                 {
-                    dialog.Description = "選擇圖片目錄";
-                    
-                    // 設置初始目錄：如果 TextBox 有路徑，使用該路徑；否則使用項目下的 VirtualIndustrialPC
-                    if (!string.IsNullOrWhiteSpace(imagePathTextBox.Text) && Directory.Exists(imagePathTextBox.Text))
+                    singleFileTextBox.Text = dialog.FileName;
+                    AddLog($"已選擇單文件: {dialog.FileName}");
+                    SavePathsToConfig();
+                    UpdateProcessButtonStates();
+                }
+            }
+        }
+        
+        private void BrowseBatchFileButton_Click(object sender, EventArgs e)
+        {
+            using (var dialog = new FolderBrowserDialog())
+            {
+                dialog.Description = "選擇批量處理目錄";
+                
+                // 設置初始目錄：如果 TextBox 有路徑，使用該路徑；否則使用項目下的 VirtualIndustrialPC
+                if (!string.IsNullOrWhiteSpace(batchFileTextBox.Text) && Directory.Exists(batchFileTextBox.Text))
+                {
+                    dialog.InitialDirectory = batchFileTextBox.Text;
+                }
+                else
+                {
+                    var currentDir = new DirectoryInfo(Directory.GetCurrentDirectory());
+                    var projectRoot = FindProjectRoot(currentDir);
+                    if (projectRoot != null)
                     {
-                        dialog.InitialDirectory = imagePathTextBox.Text;
-                    }
-                    else
-                    {
-                        var currentDir = new DirectoryInfo(Directory.GetCurrentDirectory());
-                        var projectRoot = FindProjectRoot(currentDir);
-                        if (projectRoot != null)
+                        var imageDir = Path.Combine(projectRoot, "VirtualIndustrialPC");
+                        if (Directory.Exists(imageDir))
                         {
-                            var imageDir = Path.Combine(projectRoot, "VirtualIndustrialPC");
-                            if (Directory.Exists(imageDir))
-                            {
-                                dialog.InitialDirectory = imageDir;
-                            }
-                            else
-                            {
-                                dialog.InitialDirectory = projectRoot;
-                            }
+                            dialog.InitialDirectory = imageDir;
+                        }
+                        else
+                        {
+                            dialog.InitialDirectory = projectRoot;
                         }
                     }
-                    
-                    if (dialog.ShowDialog() == DialogResult.OK)
-                    {
-                        imagePathTextBox.Text = dialog.SelectedPath;
-                        batchFileRadio.Checked = true;
-                        AddLog($"已選擇圖片目錄: {dialog.SelectedPath}");
-                        SavePathsToConfig();
-                        UpdateProcessButtonStates();
-                    }
+                }
+                
+                if (dialog.ShowDialog() == DialogResult.OK)
+                {
+                    batchFileTextBox.Text = dialog.SelectedPath;
+                    AddLog($"已選擇批量處理目錄: {dialog.SelectedPath}");
+                    SavePathsToConfig();
+                    UpdateProcessButtonStates();
                 }
             }
         }
@@ -930,22 +1060,24 @@ namespace IndustrySegSys
         
         private void UpdateProcessButtonStates()
         {
-            bool hasImagePath = !string.IsNullOrWhiteSpace(imagePathTextBox.Text);
+            // 只在手動模式下更新按鈕狀態
+            if (!manualModeRadio.Checked)
+            {
+                return;
+            }
+            
             bool hasModelPath = !string.IsNullOrWhiteSpace(modelPathTextBox.Text) && File.Exists(modelPathTextBox.Text);
             bool hasOutputPath = !string.IsNullOrWhiteSpace(outputPathTextBox.Text);
             
-            if (singleFileRadio.Checked)
-            {
-                bool isValidFile = hasImagePath && File.Exists(imagePathTextBox.Text) && !Directory.Exists(imagePathTextBox.Text);
-                processSingleFileButton.Enabled = hasModelPath && hasOutputPath && isValidFile;
-                processBatchButton.Enabled = false;
-            }
-            else if (batchFileRadio.Checked)
-            {
-                bool isValidDirectory = hasImagePath && Directory.Exists(imagePathTextBox.Text) && !File.Exists(imagePathTextBox.Text);
-                processSingleFileButton.Enabled = false;
-                processBatchButton.Enabled = hasModelPath && hasOutputPath && isValidDirectory;
-            }
+            // 檢查單文件路徑
+            bool hasSingleFilePath = !string.IsNullOrWhiteSpace(singleFileTextBox.Text);
+            bool isValidSingleFile = hasSingleFilePath && File.Exists(singleFileTextBox.Text) && !Directory.Exists(singleFileTextBox.Text);
+            processSingleFileButton.Enabled = hasModelPath && hasOutputPath && isValidSingleFile;
+            
+            // 檢查批量處理路徑
+            bool hasBatchFilePath = !string.IsNullOrWhiteSpace(batchFileTextBox.Text);
+            bool isValidBatchDirectory = hasBatchFilePath && Directory.Exists(batchFileTextBox.Text) && !File.Exists(batchFileTextBox.Text);
+            processBatchButton.Enabled = hasModelPath && hasOutputPath && isValidBatchDirectory;
         }
         
         private void InitializeDefaultPaths()
@@ -1099,25 +1231,29 @@ namespace IndustrySegSys
                             outputPathTextBox.Text = defaultOutputPath;
                         }
                         
-                        // 檢查並應用圖片路徑
-                        if (!string.IsNullOrEmpty(config.ImagePath))
+                        // 檢查並應用單文件路徑
+                        if (!string.IsNullOrEmpty(config.SingleFilePath))
                         {
-                            bool isFile = File.Exists(config.ImagePath) && !Directory.Exists(config.ImagePath);
-                            bool isDirectory = Directory.Exists(config.ImagePath) && !File.Exists(config.ImagePath);
-                            
-                            if (isFile)
+                            if (File.Exists(config.SingleFilePath) && !Directory.Exists(config.SingleFilePath))
                             {
-                                imagePathTextBox.Text = config.ImagePath;
-                                singleFileRadio.Checked = true;
-                            }
-                            else if (isDirectory)
-                            {
-                                imagePathTextBox.Text = config.ImagePath;
-                                batchFileRadio.Checked = true;
+                                singleFileTextBox.Text = config.SingleFilePath;
                             }
                             else
                             {
-                                invalidPaths.Add($"圖片路徑無效: {config.ImagePath}");
+                                invalidPaths.Add($"單文件路徑無效: {config.SingleFilePath}");
+                            }
+                        }
+                        
+                        // 檢查並應用批量處理路徑
+                        if (!string.IsNullOrEmpty(config.BatchFilePath))
+                        {
+                            if (Directory.Exists(config.BatchFilePath) && !File.Exists(config.BatchFilePath))
+                            {
+                                batchFileTextBox.Text = config.BatchFilePath;
+                            }
+                            else
+                            {
+                                invalidPaths.Add($"批量處理路徑無效: {config.BatchFilePath}");
                             }
                         }
                         
@@ -1160,7 +1296,8 @@ namespace IndustrySegSys
                     ModelPath = defaultModelPath ?? string.Empty,
                     WatchPath = string.Empty,
                     OutputPath = defaultOutputPath,
-                    ImagePath = string.Empty
+                    SingleFilePath = string.Empty,
+                    BatchFilePath = string.Empty
                 };
                 
                 var jsonContent = JsonSerializer.Serialize(defaultConfig, new JsonSerializerOptions { WriteIndented = true });
@@ -1197,7 +1334,8 @@ namespace IndustrySegSys
                     ModelPath = modelPathTextBox.Text,
                     WatchPath = watchPathTextBox.Text,
                     OutputPath = outputPathTextBox.Text,
-                    ImagePath = imagePathTextBox.Text
+                    SingleFilePath = singleFileTextBox.Text,
+                    BatchFilePath = batchFileTextBox.Text
                 };
                 
                 var configPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "config.json");
@@ -1215,7 +1353,8 @@ namespace IndustrySegSys
             public string? ModelPath { get; set; }
             public string? WatchPath { get; set; }
             public string? OutputPath { get; set; }
-            public string? ImagePath { get; set; }
+            public string? SingleFilePath { get; set; }
+            public string? BatchFilePath { get; set; }
         }
         
         private string? FindProjectRoot(DirectoryInfo? dir)
@@ -1265,118 +1404,8 @@ namespace IndustrySegSys
         
         private async void StartButton_Click(object sender, EventArgs e)
         {
-            // 驗證輸入
-            if (string.IsNullOrWhiteSpace(modelPathTextBox.Text) || !File.Exists(modelPathTextBox.Text))
-            {
-                MessageBox.Show("請選擇有效的模型文件！", "錯誤", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                return;
-            }
-            
-            if (string.IsNullOrWhiteSpace(imagePathTextBox.Text))
-            {
-                MessageBox.Show("請選擇圖片文件或目錄！", "錯誤", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                return;
-            }
-            
-            if (singleFileRadio.Checked && !File.Exists(imagePathTextBox.Text))
-            {
-                MessageBox.Show("請選擇有效的圖片文件！", "錯誤", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                return;
-            }
-            
-            if (batchFileRadio.Checked && !Directory.Exists(imagePathTextBox.Text))
-            {
-                MessageBox.Show("請選擇有效的圖片目錄！", "錯誤", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                return;
-            }
-            
-            if (string.IsNullOrWhiteSpace(outputPathTextBox.Text))
-            {
-                MessageBox.Show("請選擇輸出目錄！", "錯誤", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                return;
-            }
-            
-            // 創建輸出目錄
-            _outputFolder = outputPathTextBox.Text;
-            if (!Directory.Exists(_outputFolder))
-            {
-                Directory.CreateDirectory(_outputFolder);
-            }
-            
-            // 初始化 Yolo
-            try
-            {
-                AddLog("正在初始化模型...");
-                statusLabel.Text = "正在初始化模型...";
-                
-                _yolo?.Dispose();
-                _yolo = new Yolo(new YoloOptions
-                {
-                    ExecutionProvider = new CpuExecutionProvider(model: modelPathTextBox.Text),
-                    ImageResize = ImageResize.Stretched,
-                    SamplingOptions = new(SKFilterMode.Nearest, SKMipmapMode.None)
-                });
-                
-                AddLog($"模型加載成功: {_yolo.ModelInfo}");
-                statusLabel.Text = "模型加載成功";
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"模型初始化失敗: {ex.Message}", "錯誤", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                AddLog($"模型初始化失敗: {ex.Message}");
-                return;
-            }
-            
-            // 重置統計信息和圖片列表
-            _totalCount = 0;
-            _ngCount = 0;
-            _okCount = 0;
-            _currentImageIndex = -1;
-            ClearResultBitmaps();
-            UpdateStatistics();
-            
-            // 禁用/啟用按鈕
-            startButton.Enabled = false;
-            stopButton.Enabled = true;
-            progressBar.Value = 0;
-            imageControlPanel.Visible = false;
-            
-            // 創建取消令牌
-            _cancellationTokenSource = new CancellationTokenSource();
-            
-            // 獲取參數值
-            var confidence = confidenceTrackBar.Value / 100.0;
-            var pixelConfidence = pixelConfidenceTrackBar.Value / 100.0;
-            var iou = iouTrackBar.Value / 100.0;
-            
-            // 開始處理
-            try
-            {
-                if (singleFileRadio.Checked)
-                {
-                    await ProcessSingleFile(imagePathTextBox.Text, confidence, pixelConfidence, iou, _cancellationTokenSource.Token);
-                }
-                else
-                {
-                    await ProcessBatchFiles(imagePathTextBox.Text, confidence, pixelConfidence, iou, _cancellationTokenSource.Token);
-                }
-            }
-            catch (OperationCanceledException)
-            {
-                AddLog("處理已取消");
-                statusLabel.Text = "處理已取消";
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"處理過程中發生錯誤: {ex.Message}", "錯誤", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                AddLog($"錯誤: {ex.Message}");
-            }
-            finally
-            {
-                startButton.Enabled = true;
-                stopButton.Enabled = false;
-                statusLabel.Text = "就緒";
-            }
+            // StartButton 已移除，現在使用獨立的處理按鈕（processSingleFileButton 和 processBatchButton）
+            // 保留此方法以避免 Designer 錯誤，但方法為空
         }
         
         private void StopButton_Click(object sender, EventArgs e)
@@ -1399,7 +1428,7 @@ namespace IndustrySegSys
                 return;
             }
             
-            if (string.IsNullOrWhiteSpace(imagePathTextBox.Text) || !File.Exists(imagePathTextBox.Text))
+            if (string.IsNullOrWhiteSpace(singleFileTextBox.Text) || !File.Exists(singleFileTextBox.Text))
             {
                 MessageBox.Show("請選擇有效的圖片文件！", "錯誤", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return;
@@ -1468,7 +1497,7 @@ namespace IndustrySegSys
             // 開始處理單文件
             try
             {
-                await ProcessSingleFile(imagePathTextBox.Text, confidence, pixelConfidence, iou, _cancellationTokenSource.Token);
+                await ProcessSingleFile(singleFileTextBox.Text, confidence, pixelConfidence, iou, _cancellationTokenSource.Token);
             }
             catch (OperationCanceledException)
             {
@@ -1498,9 +1527,9 @@ namespace IndustrySegSys
                 return;
             }
             
-            if (string.IsNullOrWhiteSpace(imagePathTextBox.Text) || !Directory.Exists(imagePathTextBox.Text))
+            if (string.IsNullOrWhiteSpace(batchFileTextBox.Text) || !Directory.Exists(batchFileTextBox.Text))
             {
-                MessageBox.Show("請選擇有效的圖片目錄！", "錯誤", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show("請選擇有效的批量處理目錄！", "錯誤", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return;
             }
             
@@ -1567,7 +1596,7 @@ namespace IndustrySegSys
             // 開始批量處理
             try
             {
-                await ProcessBatchFiles(imagePathTextBox.Text, confidence, pixelConfidence, iou, _cancellationTokenSource.Token);
+                await ProcessBatchFiles(batchFileTextBox.Text, confidence, pixelConfidence, iou, _cancellationTokenSource.Token);
             }
             catch (OperationCanceledException)
             {
