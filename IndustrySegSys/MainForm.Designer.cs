@@ -131,7 +131,7 @@ namespace IndustrySegSys
             browseModelButton = new Button { Text = "瀏覽...", Width = 80, Anchor = AnchorStyles.Left };
             browseModelButton.Click += BrowseModelButton_Click;
 
-            var modelPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, Margin = new Padding(0, 5) };
+            var modelPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, Margin = new Padding(0, 5, 0, 5) };
             modelPanel.Controls.Add(new Label { Text = "模型文件:", Width = 100, AutoSize = false, TextAlign = ContentAlignment.MiddleLeft });
             modelPanel.Controls.Add(modelPathTextBox);
             modelPanel.Controls.Add(browseModelButton);
@@ -141,7 +141,7 @@ namespace IndustrySegSys
             browseWatchPathButton = new Button { Text = "瀏覽...", Width = 80, Anchor = AnchorStyles.Left };
             browseWatchPathButton.Click += BrowseWatchPathButton_Click;
 
-            var watchPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, Margin = new Padding(0, 5) };
+            var watchPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, Margin = new Padding(0, 5, 0, 5) };
             watchPanel.Controls.Add(new Label { Text = "監控目錄:", Width = 100, AutoSize = false, TextAlign = ContentAlignment.MiddleLeft });
             watchPanel.Controls.Add(watchPathTextBox);
             watchPanel.Controls.Add(browseWatchPathButton);
@@ -152,7 +152,7 @@ namespace IndustrySegSys
             browseOutputButton = new Button { Text = "瀏覽...", Width = 80, Anchor = AnchorStyles.Left };
             browseOutputButton.Click += BrowseOutputButton_Click;
 
-            var outputPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, Margin = new Padding(0, 5) };
+            var outputPanel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, Margin = new Padding(0, 5, 0, 5) };
             outputPanel.Controls.Add(new Label { Text = "輸出目錄:", Width = 100, AutoSize = false, TextAlign = ContentAlignment.MiddleLeft });
             outputPanel.Controls.Add(outputPathTextBox);
             outputPanel.Controls.Add(browseOutputButton);
@@ -161,7 +161,7 @@ namespace IndustrySegSys
             monitorModeRadio = new RadioButton { Text = "自動監控模式", Checked = true };
             manualModeRadio = new RadioButton { Text = "手動處理模式" };
 
-            var modePanel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, Margin = new Padding(0, 5) };
+            var modePanel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, Margin = new Padding(0, 5, 0, 5) };
             modePanel.Controls.Add(new Label { Text = "工作模式:", Width = 100, AutoSize = false, TextAlign = ContentAlignment.MiddleLeft });
             modePanel.Controls.Add(monitorModeRadio);
             modePanel.Controls.Add(manualModeRadio);
@@ -175,7 +175,7 @@ namespace IndustrySegSys
             singleFileRadio = new RadioButton { Text = "單文件", Checked = true };
             batchFileRadio = new RadioButton { Text = "批量處理" };
 
-            var imagePanel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, Margin = new Padding(0, 5) };
+            var imagePanel = new FlowLayoutPanel { Dock = DockStyle.Fill, FlowDirection = FlowDirection.LeftToRight, Margin = new Padding(0, 5, 0, 5) };
             imagePanel.Controls.Add(new Label { Text = "圖片路徑:", Width = 100, AutoSize = false, TextAlign = ContentAlignment.MiddleLeft });
             imagePanel.Controls.Add(imagePathTextBox);
             imagePanel.Controls.Add(browseImageButton);
@@ -347,8 +347,8 @@ namespace IndustrySegSys
                 Dock = DockStyle.Fill,
                 RowCount = 3
             };
-            infoPanel.RowStyles.Add(new RowStyle(SizeType.Auto));
-            infoPanel.RowStyles.Add(new RowStyle(SizeType.Auto));
+            infoPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            infoPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             infoPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
 
             // 統計信息
@@ -361,10 +361,10 @@ namespace IndustrySegSys
             };
 
             var statsPanel = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 4, ColumnCount = 2 };
-            statsPanel.RowStyles.Add(new RowStyle(SizeType.Auto));
+            statsPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             statsPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
-            statsPanel.RowStyles.Add(new RowStyle(SizeType.Auto));
-            statsPanel.RowStyles.Add(new RowStyle(SizeType.Auto));
+            statsPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            statsPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             statsPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
             statsPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
 

@@ -288,6 +288,25 @@ namespace IndustrySegSys
                 dialog.Filter = "ONNX模型文件 (*.onnx)|*.onnx|所有文件 (*.*)|*.*";
                 dialog.Title = "選擇模型文件";
                 
+                // 設置初始目錄：如果 TextBox 有路徑，使用其目錄；否則使用項目下的 test\assets\Models
+                if (!string.IsNullOrWhiteSpace(modelPathTextBox.Text) && File.Exists(modelPathTextBox.Text))
+                {
+                    dialog.InitialDirectory = Path.GetDirectoryName(modelPathTextBox.Text);
+                }
+                else
+                {
+                    var currentDir = new DirectoryInfo(Directory.GetCurrentDirectory());
+                    var projectRoot = FindProjectRoot(currentDir);
+                    if (projectRoot != null)
+                    {
+                        var modelDir = Path.Combine(projectRoot, "test", "assets", "Models");
+                        if (Directory.Exists(modelDir))
+                        {
+                            dialog.InitialDirectory = modelDir;
+                        }
+                    }
+                }
+                
                 if (dialog.ShowDialog() == DialogResult.OK)
                 {
                     modelPathTextBox.Text = dialog.FileName;
@@ -304,6 +323,21 @@ namespace IndustrySegSys
             {
                 dialog.Description = "選擇監控目錄";
                 
+                // 設置初始目錄：如果 TextBox 有路徑，使用該路徑；否則使用項目根目錄
+                if (!string.IsNullOrWhiteSpace(watchPathTextBox.Text) && Directory.Exists(watchPathTextBox.Text))
+                {
+                    dialog.InitialDirectory = watchPathTextBox.Text;
+                }
+                else
+                {
+                    var currentDir = new DirectoryInfo(Directory.GetCurrentDirectory());
+                    var projectRoot = FindProjectRoot(currentDir);
+                    if (projectRoot != null)
+                    {
+                        dialog.InitialDirectory = projectRoot;
+                    }
+                }
+                
                 if (dialog.ShowDialog() == DialogResult.OK)
                 {
                     watchPathTextBox.Text = dialog.SelectedPath;
@@ -318,6 +352,29 @@ namespace IndustrySegSys
             using (var dialog = new FolderBrowserDialog())
             {
                 dialog.Description = "選擇輸出目錄";
+                
+                // 設置初始目錄：如果 TextBox 有路徑，使用該路徑；否則使用項目下的 Output
+                if (!string.IsNullOrWhiteSpace(outputPathTextBox.Text) && Directory.Exists(outputPathTextBox.Text))
+                {
+                    dialog.InitialDirectory = outputPathTextBox.Text;
+                }
+                else
+                {
+                    var currentDir = new DirectoryInfo(Directory.GetCurrentDirectory());
+                    var projectRoot = FindProjectRoot(currentDir);
+                    if (projectRoot != null)
+                    {
+                        var outputDir = Path.Combine(projectRoot, "Output");
+                        if (Directory.Exists(outputDir))
+                        {
+                            dialog.InitialDirectory = outputDir;
+                        }
+                        else
+                        {
+                            dialog.InitialDirectory = projectRoot;
+                        }
+                    }
+                }
                 
                 if (dialog.ShowDialog() == DialogResult.OK)
                 {
@@ -339,6 +396,29 @@ namespace IndustrySegSys
                     dialog.Filter = "圖片文件 (*.jpg;*.jpeg;*.png;*.bmp;*.gif)|*.jpg;*.jpeg;*.png;*.bmp;*.gif|所有文件 (*.*)|*.*";
                     dialog.Title = "選擇圖片文件";
                     
+                    // 設置初始目錄：如果 TextBox 有路徑，使用其目錄；否則使用項目下的 VirtualIndustrialPC
+                    if (!string.IsNullOrWhiteSpace(imagePathTextBox.Text) && File.Exists(imagePathTextBox.Text))
+                    {
+                        dialog.InitialDirectory = Path.GetDirectoryName(imagePathTextBox.Text);
+                    }
+                    else
+                    {
+                        var currentDir = new DirectoryInfo(Directory.GetCurrentDirectory());
+                        var projectRoot = FindProjectRoot(currentDir);
+                        if (projectRoot != null)
+                        {
+                            var imageDir = Path.Combine(projectRoot, "VirtualIndustrialPC");
+                            if (Directory.Exists(imageDir))
+                            {
+                                dialog.InitialDirectory = imageDir;
+                            }
+                            else
+                            {
+                                dialog.InitialDirectory = projectRoot;
+                            }
+                        }
+                    }
+                    
                     if (dialog.ShowDialog() == DialogResult.OK)
                     {
                         imagePathTextBox.Text = dialog.FileName;
@@ -354,6 +434,29 @@ namespace IndustrySegSys
                 using (var dialog = new FolderBrowserDialog())
                 {
                     dialog.Description = "選擇圖片目錄";
+                    
+                    // 設置初始目錄：如果 TextBox 有路徑，使用該路徑；否則使用項目下的 VirtualIndustrialPC
+                    if (!string.IsNullOrWhiteSpace(imagePathTextBox.Text) && Directory.Exists(imagePathTextBox.Text))
+                    {
+                        dialog.InitialDirectory = imagePathTextBox.Text;
+                    }
+                    else
+                    {
+                        var currentDir = new DirectoryInfo(Directory.GetCurrentDirectory());
+                        var projectRoot = FindProjectRoot(currentDir);
+                        if (projectRoot != null)
+                        {
+                            var imageDir = Path.Combine(projectRoot, "VirtualIndustrialPC");
+                            if (Directory.Exists(imageDir))
+                            {
+                                dialog.InitialDirectory = imageDir;
+                            }
+                            else
+                            {
+                                dialog.InitialDirectory = projectRoot;
+                            }
+                        }
+                    }
                     
                     if (dialog.ShowDialog() == DialogResult.OK)
                     {
@@ -847,20 +950,62 @@ namespace IndustrySegSys
         
         private void InitializeDefaultPaths()
         {
-            // 獲取默認路徑
-            var defaultOutputPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Desktop), "Industry_Results");
-            string? defaultModelPath = null;
-            
-            // 嘗試查找默認模型路徑
+            // 嘗試查找項目根目錄
             var currentDir = new DirectoryInfo(Directory.GetCurrentDirectory());
             var projectRoot = FindProjectRoot(currentDir);
+            
+            // 設置默認路徑
+            string? defaultModelPath = null;
+            string? defaultOutputPath = null;
+            
             if (projectRoot != null)
             {
+                // 模型文件預設路徑：項目根目錄下的 test\assets\Models\sd900.onnx
                 var sd900Model = Path.Combine(projectRoot, "test", "assets", "Models", "sd900.onnx");
                 if (File.Exists(sd900Model))
                 {
                     defaultModelPath = sd900Model;
                 }
+                
+                // 輸出目錄預設路徑：項目根目錄下的 Output 目錄
+                // 先檢查是否已存在（不區分大小寫），如果存在則使用實際的路徑
+                var existingDirs = Directory.GetDirectories(projectRoot);
+                var existingOutputDir = existingDirs.FirstOrDefault(d => 
+                    string.Equals(Path.GetFileName(d), "Output", StringComparison.OrdinalIgnoreCase));
+                
+                string outputDir;
+                if (existingOutputDir != null)
+                {
+                    // 使用已存在的目錄（保留實際大小寫）
+                    outputDir = existingOutputDir;
+                }
+                else
+                {
+                    // 創建新目錄，使用大寫 Output
+                    outputDir = Path.Combine(projectRoot, "Output");
+                }
+                
+                try
+                {
+                    // 如果目錄不存在，創建它
+                    if (!Directory.Exists(outputDir))
+                    {
+                        Directory.CreateDirectory(outputDir);
+                    }
+                    defaultOutputPath = outputDir;
+                }
+                catch (Exception ex)
+                {
+                    AddLog($"無法創建預設輸出目錄 {outputDir}: {ex.Message}");
+                    // 如果創建失敗，使用桌面目錄作為備用
+                    defaultOutputPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Desktop), "Industry_Results");
+                }
+            }
+            
+            // 如果找不到項目根目錄，使用桌面目錄作為備用
+            if (defaultOutputPath == null)
+            {
+                defaultOutputPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Desktop), "Industry_Results");
             }
             
             // 嘗試從 JSON 文件讀取路徑配置
@@ -913,18 +1058,37 @@ namespace IndustrySegSys
                         // 檢查並應用輸出目錄路徑
                         if (!string.IsNullOrEmpty(config.OutputPath))
                         {
+                            // 檢查是否為舊的預設路徑，如果是則更新為新的預設路徑
+                            string outputPathToUse = config.OutputPath;
+                            if (projectRoot != null && !string.IsNullOrEmpty(defaultOutputPath))
+                            {
+                                var oldDefaultPath = Path.Combine(projectRoot, "VirtualIndustrialPC", "lines");
+                                if (string.Equals(config.OutputPath, oldDefaultPath, StringComparison.OrdinalIgnoreCase))
+                                {
+                                    // 自動遷移到新的預設路徑
+                                    outputPathToUse = defaultOutputPath;
+                                    AddLog($"檢測到舊的預設輸出目錄，已自動更新為新的預設路徑");
+                                }
+                            }
+                            
                             try
                             {
-                                if (!Directory.Exists(config.OutputPath))
+                                if (!Directory.Exists(outputPathToUse))
                                 {
-                                    Directory.CreateDirectory(config.OutputPath);
+                                    Directory.CreateDirectory(outputPathToUse);
                                 }
-                                _outputFolder = config.OutputPath;
-                                outputPathTextBox.Text = config.OutputPath;
+                                _outputFolder = outputPathToUse;
+                                outputPathTextBox.Text = outputPathToUse;
+                                
+                                // 如果路徑被更新，保存到配置文件
+                                if (outputPathToUse != config.OutputPath)
+                                {
+                                    SavePathsToConfig();
+                                }
                             }
                             catch
                             {
-                                invalidPaths.Add($"輸出目錄路徑無效或無法創建: {config.OutputPath}");
+                                invalidPaths.Add($"輸出目錄路徑無效或無法創建: {outputPathToUse}");
                                 _outputFolder = defaultOutputPath;
                                 outputPathTextBox.Text = defaultOutputPath;
                             }

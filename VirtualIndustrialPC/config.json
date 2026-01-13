@@ -1,6 +1,6 @@
 {
   "num_stations": 3,
-  "images_per_station": 4,
+  "images_per_station": 8,
   "ok_images_path": "ok",
   "ng_images_path": "ng",
   "output_path": "lines",
