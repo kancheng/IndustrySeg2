@@ -18,6 +18,10 @@ namespace IndustrySegSys
 {
     public partial class MainForm : Form
     {
+        // --- layout guards ---
+        private bool _splittersInitialized = false;
+        private bool _splitterInitInProgress = false;
+
         private Yolo? _yolo;
         private SegmentationDrawingOptions _drawingOptions = default!;
         private Bitmap? _currentResultBitmap;
@@ -29,29 +33,43 @@ namespace IndustrySegSys
         private int _ngCount = 0;
         private int _okCount = 0;
         private string _outputFolder = string.Empty;
-        
+
         // 目錄監控相關
         private FileSystemWatcher? _fileSystemWatcher;
         private Dictionary<string, FileSystemWatcher> _materialWatchers = new Dictionary<string, FileSystemWatcher>();
         private HashSet<string> _processedMaterialDirs = new HashSet<string>();
         private object _processingLock = new object();
-        
+
         public MainForm()
         {
             InitializeComponent();
+            // Ensure the window is large enough so SplitContainer min sizes will never break layout.
+            this.MinimumSize = new Size(900, 650);
+            if (this.Size.Width < 900 || this.Size.Height < 650)
+            {
+                this.Size = new Size(1200, 800);
+            }
+
+            // Delay splitter min sizes + distances until the form is actually shown (Handle created + real size).
+            this.Shown += (s, e) => InitSplitContainersSafe();
+            this.Resize += (s, e) => InitSplitContainersSafe();
+
             InitializeDrawingOptions();
             InitializeDefaultPaths();
             SetupEventHandlers();
-            
+
+            // 在窗口載入完成後應用布局比例
+            this.Load += MainForm_Load;
+
             // 初始化時設置控件可見性（根據默認選中的監控模式）
             // 手動觸發一次事件以確保控件狀態正確
             AddLog("初始化完成，當前模式: " + (monitorModeRadio.Checked ? "監控模式" : "手動模式"));
-            
+
             // 測試：直接設置手動模式控件可見性
             AddLog($"測試 - manualImagePanel 初始狀態: Visible={manualImagePanel.Visible}, Parent={manualImagePanel.Parent?.GetType().Name ?? "null"}");
             AddLog($"測試 - processSingleFileButton 初始狀態: Visible={processSingleFileButton.Visible}, Parent={processSingleFileButton.Parent?.GetType().Name ?? "null"}");
             AddLog($"測試 - progressGroupBox 初始狀態: Visible={progressGroupBox.Visible}, Parent={progressGroupBox.Parent?.GetType().Name ?? "null"}");
-            
+
             if (monitorModeRadio.Checked)
             {
                 // 觸發監控模式的事件處理
@@ -65,7 +83,215 @@ namespace IndustrySegSys
                 manualModeRadio.Checked = true;
             }
         }
-        
+
+        private void MainForm_Load(object sender, EventArgs e)
+        {
+            // 延遲設置布局比例，確保控件已經有實際尺寸
+            this.BeginInvoke(new Action(() =>
+            {
+                // Ensure SplitContainers are initialized with safe MinSize and SplitterDistance after layout
+                EnsureSplitContainersInitialized();
+                // 窗口載入完成後，從配置文件讀取並應用布局比例
+                var configPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "config.json");
+                if (File.Exists(configPath))
+                {
+                    try
+                    {
+                        var jsonContent = File.ReadAllText(configPath);
+                        var config = JsonSerializer.Deserialize<PathConfig>(jsonContent);
+                        if (config != null)
+                        {
+                            ApplyLayoutRatios(config.MainSplitterRatio, config.RightSplitterRatio);
+                        }
+                    }
+                    catch
+                    {
+                        // 如果讀取失敗，使用預設比例
+                        ApplyLayoutRatios(0.3333, 0.5);
+                    }
+                }
+                else
+                {
+                    // 如果沒有配置文件，使用預設比例
+                    ApplyLayoutRatios(0.3333, 0.5);
+                }
+            }));
+        }
+
+        private void ApplyLayoutRatios(double? mainRatio, double? rightRatio)
+        {
+            if (mainSplitContainer == null || rightSplitContainer == null)
+                return;
+
+            try
+            {
+                // 確保控件已經有實際尺寸（依 Orientation 決定以 Height 或 Width 作為驗證基準）
+                if (GetSplitTotalLength(mainSplitContainer) <= 0 || GetSplitTotalLength(rightSplitContainer) <= 0)
+                {
+                    // 如果尺寸還未確定，延遲執行
+                    this.BeginInvoke(new Action(() => ApplyLayoutRatios(mainRatio, rightRatio)));
+                    return;
+                }
+
+                // 應用主分隔線比例（圖片區域佔比）
+                var mainTotal = GetSplitTotalLength(mainSplitContainer);
+                var mainMinDistance = mainSplitContainer.Panel1MinSize;
+                var mainMaxDistance = mainTotal - mainSplitContainer.Panel2MinSize;
+
+                // 確保有效範圍存在
+                if (mainMinDistance >= mainMaxDistance)
+                {
+                    AddLog($"主分隔線有效範圍無效: Min={mainMinDistance}, Max={mainMaxDistance}, Total={mainTotal}, Orientation={mainSplitContainer.Orientation}");
+                    return;
+                }
+
+                if (mainRatio.HasValue && mainRatio.Value > 0 && mainRatio.Value < 1)
+                {
+                    var distance = Clamp((int)(mainTotal * mainRatio.Value), mainMinDistance, mainMaxDistance);
+                    TrySetSplitterDistance(mainSplitContainer, distance);
+                }
+                else
+                {
+                    // 預設平均分布：33.33%，但確保在有效範圍內
+                    var distance = Clamp(mainTotal / 3, mainMinDistance, mainMaxDistance);
+                    TrySetSplitterDistance(mainSplitContainer, distance);
+                }
+
+                // 應用右側分隔線比例（終端區域佔比）
+                var rightTotal = GetSplitTotalLength(rightSplitContainer);
+                var rightMinDistance = rightSplitContainer.Panel1MinSize;
+                var rightMaxDistance = rightTotal - rightSplitContainer.Panel2MinSize;
+
+                // 確保有效範圍存在
+                if (rightMinDistance >= rightMaxDistance)
+                {
+                    AddLog($"右側分隔線有效範圍無效: Min={rightMinDistance}, Max={rightMaxDistance}, Total={rightTotal}, Orientation={rightSplitContainer.Orientation}");
+                    return;
+                }
+
+                if (rightRatio.HasValue && rightRatio.Value > 0 && rightRatio.Value < 1)
+                {
+                    var distance = Clamp((int)(rightTotal * rightRatio.Value), rightMinDistance, rightMaxDistance);
+                    TrySetSplitterDistance(rightSplitContainer, distance);
+                }
+                else
+                {
+                    // 預設平均分布：50%，但確保在有效範圍內
+                    var distance = Clamp(rightTotal / 2, rightMinDistance, rightMaxDistance);
+                    TrySetSplitterDistance(rightSplitContainer, distance);
+                }
+            }
+            catch (Exception ex)
+            {
+                AddLog($"應用布局比例失敗: {ex.Message}");
+            }
+        }
+
+        private static int GetSplitTotalLength(SplitContainer sc)
+            => sc.Orientation == Orientation.Horizontal ? sc.Height : sc.Width;
+
+        private static int Clamp(int value, int min, int max)
+            => value < min ? min : (value > max ? max : value);
+
+
+        private void EnsureSplitContainersInitialized()
+        {
+            if (mainSplitContainer == null || rightSplitContainer == null)
+                return;
+
+            InitializeSplitContainer(mainSplitContainer, desiredPanel1Min: 100, desiredPanel2Min: 200, defaultRatio: 0.3333);
+            InitializeSplitContainer(rightSplitContainer, desiredPanel1Min: 200, desiredPanel2Min: 200, defaultRatio: 0.5);
+        }
+
+        private void InitializeSplitContainer(SplitContainer sc, int desiredPanel1Min, int desiredPanel2Min, double defaultRatio)
+        {
+            // Total length depends on orientation. During early layout it can be 0.
+            var total = GetSplitTotalLength(sc);
+            if (total <= 0)
+                return;
+
+            // If the container is too small for desired mins, shrink mins dynamically to avoid SplitterDistance exceptions.
+            var splitter = sc.SplitterWidth <= 0 ? 4 : sc.SplitterWidth;
+            var min1 = Math.Max(0, desiredPanel1Min);
+            var min2 = Math.Max(0, desiredPanel2Min);
+
+            // Leave a small buffer to avoid edge cases during layout.
+            const int buffer = 8;
+
+            if (total < (min1 + min2 + splitter + buffer))
+            {
+                // Prefer keeping Panel1 min, shrink Panel2 first.
+                var remaining = total - min1 - splitter - buffer;
+                if (remaining < 0) remaining = 0;
+                min2 = Math.Min(min2, remaining);
+
+                // If still impossible, relax Panel1 too.
+                if (total < (min1 + min2 + splitter + buffer))
+                {
+                    var remaining2 = total - splitter - buffer;
+                    if (remaining2 < 0) remaining2 = 0;
+
+                    // Split remaining between panels
+                    min1 = Math.Min(min1, remaining2 / 2);
+                    min2 = Math.Min(min2, remaining2 - min1);
+                }
+            }
+
+            // Apply mins (these assignments can indirectly force SplitterDistance validation inside WinForms)
+            try
+            {
+                sc.Panel1MinSize = min1;
+                sc.Panel2MinSize = min2;
+            }
+            catch
+            {
+                // If WinForms still rejects during transient layout, just skip now and retry later.
+                if (this.IsHandleCreated)
+                    this.BeginInvoke(new Action(() => InitializeSplitContainer(sc, desiredPanel1Min, desiredPanel2Min, defaultRatio)));
+                return;
+            }
+
+            // Now apply a safe SplitterDistance
+            total = GetSplitTotalLength(sc);
+            var minDistance = sc.Panel1MinSize;
+            var maxDistance = total - sc.Panel2MinSize;
+
+            if (total <= 0 || maxDistance <= minDistance)
+                return;
+
+            var distance = Clamp((int)(total * defaultRatio), minDistance, maxDistance);
+            TrySetSplitterDistance(sc, distance);
+        }
+
+        private void TrySetSplitterDistance(SplitContainer sc, int distance)
+        {
+            try
+            {
+                sc.SplitterDistance = distance;
+            }
+            catch (InvalidOperationException)
+            {
+                // 某些時刻（例如 Resize 過程中）WinForms 仍可能暫時認為尺寸未就緒。
+                // 這裡再以當下尺寸重新 clamp 一次並重試，避免直接拋出。
+                var total = GetSplitTotalLength(sc);
+                var min = sc.Panel1MinSize;
+                var max = total - sc.Panel2MinSize;
+                if (total <= 0 || max <= min)
+                    return;
+
+                try
+                {
+                    sc.SplitterDistance = Clamp(distance, min, max);
+                }
+                catch (InvalidOperationException)
+                {
+                    // 仍可能在某些時刻（例如佈局尚未完成）失敗，延遲重試避免崩潰
+                    if (this.IsHandleCreated)
+                        this.BeginInvoke(new Action(() => TrySetSplitterDistance(sc, distance)));
+                }
+            }
+        }
+
         private void InitializeDrawingOptions()
         {
             _drawingOptions = new SegmentationDrawingOptions
@@ -84,7 +310,7 @@ namespace IndustrySegSys
                 DrawSegmentationPixelMask = true
             };
         }
-        
+
         private void SetupEventHandlers()
         {
             // TrackBar 值改變事件
@@ -92,17 +318,17 @@ namespace IndustrySegSys
             {
                 confidenceValueLabel.Text = (confidenceTrackBar.Value / 100.0).ToString("F2");
             };
-            
+
             pixelConfidenceTrackBar.ValueChanged += (s, e) =>
             {
                 pixelConfidenceValueLabel.Text = (pixelConfidenceTrackBar.Value / 100.0).ToString("F2");
             };
-            
+
             iouTrackBar.ValueChanged += (s, e) =>
             {
                 iouValueLabel.Text = (iouTrackBar.Value / 100.0).ToString("F2");
             };
-            
+
             // 模式切換
             monitorModeRadio.CheckedChanged += (s, e) =>
             {
@@ -118,9 +344,9 @@ namespace IndustrySegSys
                     progressGroupBox.Visible = false;
                 }
             };
-            
+
             manualModeRadio.CheckedChanged += ManualModeRadio_CheckedChanged;
-            
+
             // 監聽單文件路徑 TextBox 的文本變化
             singleFileTextBox.TextChanged += (s, e) =>
             {
@@ -129,7 +355,7 @@ namespace IndustrySegSys
                     UpdateProcessButtonStates();
                 }
             };
-            
+
             // 監聽批量處理路徑 TextBox 的文本變化
             batchFileTextBox.TextChanged += (s, e) =>
             {
@@ -138,7 +364,7 @@ namespace IndustrySegSys
                     UpdateProcessButtonStates();
                 }
             };
-            
+
             // 監聽模型路徑 TextBox 的文本變化
             modelPathTextBox.TextChanged += (s, e) =>
             {
@@ -147,7 +373,7 @@ namespace IndustrySegSys
                     UpdateProcessButtonStates();
                 }
             };
-            
+
             // 監聽輸出目錄 TextBox 的文本變化
             outputPathTextBox.TextChanged += (s, e) =>
             {
@@ -157,7 +383,7 @@ namespace IndustrySegSys
                 }
             };
         }
-        
+
         private void ManualModeRadio_CheckedChanged(object sender, EventArgs e)
         {
             AddLog($"=== ManualModeRadio_CheckedChanged 觸發 ===");
@@ -166,17 +392,17 @@ namespace IndustrySegSys
             AddLog($"processSingleFileButton 存在: {processSingleFileButton != null}");
             AddLog($"processBatchButton 存在: {processBatchButton != null}");
             AddLog($"progressGroupBox 存在: {progressGroupBox != null}");
-            
+
             if (manualModeRadio.Checked)
             {
                 AddLog("開始設置手動模式控件可見性");
-                
+
                 try
                 {
                     manualImagePanel.Visible = true;
                     AddLog($"✓ manualImagePanel.Visible = {manualImagePanel.Visible}");
                     AddLog($"✓ manualImagePanel.Controls.Count = {manualImagePanel.Controls.Count}");
-                    
+
                     // 檢查 manualImageTable 的內容
                     if (manualImagePanel.Controls.Count > 0 && manualImagePanel.Controls[0] is TableLayoutPanel manualImageTable)
                     {
@@ -188,31 +414,31 @@ namespace IndustrySegSys
                             AddLog($"  - Control[{i}]: {ctrl.GetType().Name}, Visible={ctrl.Visible}");
                         }
                     }
-                    
+
                     startMonitorButton.Visible = false;
                     stopMonitorButton.Visible = false;
                     startButton.Visible = false;
                     stopButton.Visible = true;
                     AddLog($"✓ stopButton.Visible = {stopButton.Visible}");
-                    
+
                     processSingleFileButton.Visible = true;
                     AddLog($"✓ processSingleFileButton.Visible = {processSingleFileButton.Visible}");
-                    
+
                     processBatchButton.Visible = true;
                     AddLog($"✓ processBatchButton.Visible = {processBatchButton.Visible}");
-                    
+
                     progressGroupBox.Visible = true;
                     AddLog($"✓ progressGroupBox.Visible = {progressGroupBox.Visible}");
-                    
+
                     UpdateProcessButtonStates();
-                    
+
                     // 先調整 configGroupBox 高度（在刷新之前）
                     if (configGroupBox != null)
                     {
                         configGroupBox.Height = 320;  // 增加高度以顯示手動模式控件
                         AddLog($"✓ 調整 configGroupBox.Height = {configGroupBox.Height}");
                     }
-                    
+
                     // 強制刷新所有父容器
                     if (manualImagePanel.Parent != null)
                     {
@@ -222,12 +448,12 @@ namespace IndustrySegSys
                             parentTable.PerformLayout();
                             AddLog($"✓ 執行 parentTable.PerformLayout()");
                         }
-                        
+
                         manualImagePanel.Parent.Invalidate();
                         manualImagePanel.Parent.Update();
                         AddLog($"✓ 刷新 manualImagePanel.Parent: {manualImagePanel.Parent.GetType().Name}");
                     }
-                    
+
                     // 刷新 configGroupBox
                     if (configGroupBox != null)
                     {
@@ -236,26 +462,26 @@ namespace IndustrySegSys
                         configGroupBox.PerformLayout();
                         AddLog($"✓ 刷新 configGroupBox");
                     }
-                    
+
                     if (processSingleFileButton.Parent != null)
                     {
                         processSingleFileButton.Parent.Invalidate();
                         processSingleFileButton.Parent.Update();
                         AddLog($"✓ 刷新 processSingleFileButton.Parent: {processSingleFileButton.Parent.GetType().Name}");
                     }
-                    
+
                     if (progressGroupBox.Parent != null)
                     {
                         progressGroupBox.Parent.Invalidate();
                         progressGroupBox.Parent.Update();
                         AddLog($"✓ 刷新 progressGroupBox.Parent: {progressGroupBox.Parent.GetType().Name}");
                     }
-                    
+
                     this.Invalidate();
                     this.Update();
                     this.Refresh();
                     this.PerformLayout();
-                    
+
                     AddLog("=== 已切換到手動處理模式 - 所有控件已顯示 ===");
                 }
                 catch (Exception ex)
@@ -274,9 +500,9 @@ namespace IndustrySegSys
                 AddLog("已切換回監控模式");
             }
         }
-        
+
         // ========== 線程安全更新方法 ==========
-        
+
         private void InvokeUI(Action action)
         {
             if (InvokeRequired)
@@ -288,7 +514,7 @@ namespace IndustrySegSys
                 action();
             }
         }
-        
+
         private void AddLog(string message)
         {
             InvokeUI(() =>
@@ -299,7 +525,7 @@ namespace IndustrySegSys
                 logTextBox.ScrollToCaret();
             });
         }
-        
+
         private void UpdateStatistics()
         {
             InvokeUI(() =>
@@ -307,7 +533,7 @@ namespace IndustrySegSys
                 totalCountLabel.Text = $"總處理數: {_totalCount}";
                 ngCountLabel.Text = _ngCount.ToString();
                 okCountLabel.Text = _okCount.ToString();
-                
+
                 if (_totalCount > 0)
                 {
                     var yieldRate = (double)_okCount / _totalCount * 100.0;
@@ -319,9 +545,9 @@ namespace IndustrySegSys
                 }
             });
         }
-        
+
         // ========== SKBitmap 轉換為 Bitmap ==========
-        
+
         private Bitmap SKBitmapToBitmap(SKBitmap skBitmap)
         {
             // 方法 1: 通過 PNG 編碼（較慢但可靠，推薦用於小圖片）
@@ -332,7 +558,7 @@ namespace IndustrySegSys
                 return new Bitmap(stream);
             }
         }
-        
+
         // 方法 2: 直接像素複製（較快，適合大圖片，但需要處理格式轉換）
         private Bitmap SKBitmapToBitmapFast(SKBitmap skBitmap)
         {
@@ -341,21 +567,21 @@ namespace IndustrySegSys
                 new Rectangle(0, 0, bitmap.Width, bitmap.Height),
                 System.Drawing.Imaging.ImageLockMode.WriteOnly,
                 bitmap.PixelFormat);
-            
+
             try
             {
                 var srcPtr = skBitmap.GetPixels();
                 var dstPtr = bitmapData.Scan0;
                 var bytesPerPixel = 4; // ARGB
                 var rowBytes = bitmap.Width * bytesPerPixel;
-                
+
                 unsafe
                 {
                     for (int y = 0; y < bitmap.Height; y++)
                     {
                         var srcRow = (byte*)srcPtr + (y * skBitmap.RowBytes);
                         var dstRow = (byte*)dstPtr + (y * bitmapData.Stride);
-                        
+
                         for (int x = 0; x < bitmap.Width; x++)
                         {
                             // SKBitmap 是 RGBA，需要轉換為 ARGB
@@ -371,30 +597,30 @@ namespace IndustrySegSys
             {
                 bitmap.UnlockBits(bitmapData);
             }
-            
+
             return bitmap;
         }
-        
+
         private void ShowImageAtIndex(int index)
         {
             if (index < 0 || index >= _resultBitmaps.Count)
                 return;
-            
+
             InvokeUI(() =>
             {
                 _currentImageIndex = index;
                 _currentResultBitmap = _resultBitmaps[index];
-                
+
                 // 設置 PictureBox 顯示圖片
                 resultPictureBox.Image = _currentResultBitmap;
                 resultPictureBox.SizeMode = PictureBoxSizeMode.Zoom; // 保持寬高比縮放
-                
+
                 // 隱藏"暫無圖片"標籤
                 noImageLabel.Visible = false;
-                
+
                 // 更新導航
                 UpdateImageNavigation();
-                
+
                 // 載入並顯示 JSON 資訊
                 if (index < _resultImagePaths.Count)
                 {
@@ -406,7 +632,7 @@ namespace IndustrySegSys
                 }
             });
         }
-        
+
         private void UpdateImageNavigation()
         {
             InvokeUI(() =>
@@ -416,23 +642,23 @@ namespace IndustrySegSys
                     imageControlPanel.Visible = false;
                     return;
                 }
-                
+
                 imageControlPanel.Visible = true;
                 imageCounterLabel.Text = $"{_currentImageIndex + 1} / {_resultBitmaps.Count}";
                 previousImageButton.Enabled = _currentImageIndex > 0;
                 nextImageButton.Enabled = _currentImageIndex < _resultBitmaps.Count - 1;
             });
         }
-        
+
         // ========== 文件對話框 ==========
-        
+
         private void BrowseModelButton_Click(object sender, EventArgs e)
         {
             using (var dialog = new OpenFileDialog())
             {
                 dialog.Filter = "ONNX模型文件 (*.onnx)|*.onnx|所有文件 (*.*)|*.*";
                 dialog.Title = "選擇模型文件";
-                
+
                 // 設置初始目錄：如果 TextBox 有路徑，使用其目錄；否則使用項目下的 test\assets\Models
                 if (!string.IsNullOrWhiteSpace(modelPathTextBox.Text) && File.Exists(modelPathTextBox.Text))
                 {
@@ -451,7 +677,7 @@ namespace IndustrySegSys
                         }
                     }
                 }
-                
+
                 if (dialog.ShowDialog() == DialogResult.OK)
                 {
                     modelPathTextBox.Text = dialog.FileName;
@@ -461,13 +687,13 @@ namespace IndustrySegSys
                 }
             }
         }
-        
+
         private void BrowseWatchPathButton_Click(object sender, EventArgs e)
         {
             using (var dialog = new FolderBrowserDialog())
             {
                 dialog.Description = "選擇監控目錄";
-                
+
                 // 設置初始目錄：如果 TextBox 有路徑，使用該路徑；否則使用項目根目錄
                 if (!string.IsNullOrWhiteSpace(watchPathTextBox.Text) && Directory.Exists(watchPathTextBox.Text))
                 {
@@ -482,7 +708,7 @@ namespace IndustrySegSys
                         dialog.InitialDirectory = projectRoot;
                     }
                 }
-                
+
                 if (dialog.ShowDialog() == DialogResult.OK)
                 {
                     watchPathTextBox.Text = dialog.SelectedPath;
@@ -491,13 +717,13 @@ namespace IndustrySegSys
                 }
             }
         }
-        
+
         private void BrowseOutputButton_Click(object sender, EventArgs e)
         {
             using (var dialog = new FolderBrowserDialog())
             {
                 dialog.Description = "選擇輸出目錄";
-                
+
                 // 設置初始目錄：如果 TextBox 有路徑，使用該路徑；否則使用項目下的 Output
                 if (!string.IsNullOrWhiteSpace(outputPathTextBox.Text) && Directory.Exists(outputPathTextBox.Text))
                 {
@@ -520,7 +746,7 @@ namespace IndustrySegSys
                         }
                     }
                 }
-                
+
                 if (dialog.ShowDialog() == DialogResult.OK)
                 {
                     outputPathTextBox.Text = dialog.SelectedPath;
@@ -531,14 +757,14 @@ namespace IndustrySegSys
                 }
             }
         }
-        
+
         private void BrowseSingleFileButton_Click(object sender, EventArgs e)
         {
             using (var dialog = new OpenFileDialog())
             {
                 dialog.Filter = "圖片文件 (*.jpg;*.jpeg;*.png;*.bmp;*.gif)|*.jpg;*.jpeg;*.png;*.bmp;*.gif|所有文件 (*.*)|*.*";
                 dialog.Title = "選擇圖片文件";
-                
+
                 // 設置初始目錄：如果 TextBox 有路徑，使用其目錄；否則使用項目下的 VirtualIndustrialPC
                 if (!string.IsNullOrWhiteSpace(singleFileTextBox.Text) && File.Exists(singleFileTextBox.Text))
                 {
@@ -561,7 +787,7 @@ namespace IndustrySegSys
                         }
                     }
                 }
-                
+
                 if (dialog.ShowDialog() == DialogResult.OK)
                 {
                     singleFileTextBox.Text = dialog.FileName;
@@ -571,13 +797,13 @@ namespace IndustrySegSys
                 }
             }
         }
-        
+
         private void BrowseBatchFileButton_Click(object sender, EventArgs e)
         {
             using (var dialog = new FolderBrowserDialog())
             {
                 dialog.Description = "選擇批量處理目錄";
-                
+
                 // 設置初始目錄：如果 TextBox 有路徑，使用該路徑；否則使用項目下的 VirtualIndustrialPC
                 if (!string.IsNullOrWhiteSpace(batchFileTextBox.Text) && Directory.Exists(batchFileTextBox.Text))
                 {
@@ -600,7 +826,7 @@ namespace IndustrySegSys
                         }
                     }
                 }
-                
+
                 if (dialog.ShowDialog() == DialogResult.OK)
                 {
                     batchFileTextBox.Text = dialog.SelectedPath;
@@ -610,9 +836,9 @@ namespace IndustrySegSys
                 }
             }
         }
-        
+
         // ========== 監控功能 ==========
-        
+
         private async void StartMonitorButton_Click(object sender, EventArgs e)
         {
             // 驗證輸入
@@ -621,32 +847,32 @@ namespace IndustrySegSys
                 MessageBox.Show("請選擇有效的模型文件！", "錯誤", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return;
             }
-            
+
             if (string.IsNullOrWhiteSpace(watchPathTextBox.Text) || !Directory.Exists(watchPathTextBox.Text))
             {
                 MessageBox.Show("請選擇有效的監控目錄！", "錯誤", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return;
             }
-            
+
             if (string.IsNullOrWhiteSpace(outputPathTextBox.Text))
             {
                 MessageBox.Show("請選擇輸出目錄！", "錯誤", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return;
             }
-            
+
             // 創建輸出目錄
             _outputFolder = outputPathTextBox.Text;
             if (!Directory.Exists(_outputFolder))
             {
                 Directory.CreateDirectory(_outputFolder);
             }
-            
+
             // 初始化 Yolo
             try
             {
                 AddLog("正在初始化模型...");
                 statusLabel.Text = "正在初始化模型...";
-                
+
                 _yolo?.Dispose();
                 _yolo = new Yolo(new YoloOptions
                 {
@@ -654,7 +880,7 @@ namespace IndustrySegSys
                     ImageResize = ImageResize.Stretched,
                     SamplingOptions = new(SKFilterMode.Nearest, SKMipmapMode.None)
                 });
-                
+
                 AddLog($"模型加載成功: {_yolo.ModelInfo}");
                 statusLabel.Text = "模型加載成功";
             }
@@ -664,14 +890,14 @@ namespace IndustrySegSys
                 AddLog($"模型初始化失敗: {ex.Message}");
                 return;
             }
-            
+
             // 重置統計信息
             _totalCount = 0;
             _ngCount = 0;
             _okCount = 0;
             _processedMaterialDirs.Clear();
             UpdateStatistics();
-            
+
             // 啟動目錄監控
             try
             {
@@ -681,18 +907,18 @@ namespace IndustrySegSys
                     IncludeSubdirectories = false,
                     EnableRaisingEvents = true
                 };
-                
+
                 _fileSystemWatcher.Created += FileSystemWatcher_Created;
                 _fileSystemWatcher.Error += FileSystemWatcher_Error;
-                
+
                 AddLog($"開始監控目錄: {watchPathTextBox.Text}");
                 statusLabel.Text = "監控中...";
                 monitorStatusLabel.Text = "監控狀態: 運行中";
                 monitorStatusLabel.ForeColor = Color.Green;
-                
+
                 // 處理已存在的目錄
                 await ProcessExistingDirectories(watchPathTextBox.Text);
-                
+
                 startMonitorButton.Enabled = false;
                 stopMonitorButton.Enabled = true;
             }
@@ -702,7 +928,7 @@ namespace IndustrySegSys
                 AddLog($"啟動監控失敗: {ex.Message}");
             }
         }
-        
+
         private void StopMonitorButton_Click(object sender, EventArgs e)
         {
             if (_fileSystemWatcher != null)
@@ -713,7 +939,7 @@ namespace IndustrySegSys
                 _fileSystemWatcher.Dispose();
                 _fileSystemWatcher = null;
             }
-            
+
             // 停止所有料號目錄的監控器
             lock (_processingLock)
             {
@@ -730,20 +956,20 @@ namespace IndustrySegSys
                 }
                 _materialWatchers.Clear();
             }
-            
+
             AddLog("停止監控");
             statusLabel.Text = "監控已停止";
             monitorStatusLabel.Text = "監控狀態: 未啟動";
             monitorStatusLabel.ForeColor = Color.Gray;
-            
+
             startMonitorButton.Enabled = true;
             stopMonitorButton.Enabled = false;
         }
-        
+
         private async void FileSystemWatcher_Created(object sender, FileSystemEventArgs e)
         {
             await Task.Delay(1000); // 延遲確保目錄完全創建
-            
+
             if (Directory.Exists(e.FullPath))
             {
                 string watchPath = string.Empty;
@@ -751,12 +977,12 @@ namespace IndustrySegSys
                 {
                     watchPath = watchPathTextBox.Text;
                 });
-                
+
                 if (string.IsNullOrEmpty(watchPath))
                     return;
-                
+
                 var parentPath = Path.GetDirectoryName(e.FullPath);
-                
+
                 if (string.Equals(parentPath, watchPath, StringComparison.OrdinalIgnoreCase))
                 {
                     // 料號目錄
@@ -765,7 +991,7 @@ namespace IndustrySegSys
                 }
             }
         }
-        
+
         private void CreateMaterialWatcher(string materialDirPath)
         {
             lock (_processingLock)
@@ -780,7 +1006,7 @@ namespace IndustrySegSys
                     oldWatcher.Dispose();
                     _materialWatchers.Remove(materialDirPath);
                 }
-                
+
                 // 創建新的監控器
                 try
                 {
@@ -790,12 +1016,12 @@ namespace IndustrySegSys
                         IncludeSubdirectories = false,
                         EnableRaisingEvents = true
                     };
-                    
+
                     watcher.Created += MaterialWatcher_StationCreated;
                     watcher.Error += FileSystemWatcher_Error;
-                    
+
                     _materialWatchers[materialDirPath] = watcher;
-                    
+
                     InvokeUI(() =>
                     {
                         AddLog($"  已為料號目錄創建工站監控器: {Path.GetFileName(materialDirPath)}");
@@ -810,11 +1036,11 @@ namespace IndustrySegSys
                 }
             }
         }
-        
+
         private async void MaterialWatcher_StationCreated(object sender, FileSystemEventArgs e)
         {
             await Task.Delay(1000); // 延遲確保目錄完全創建
-            
+
             if (Directory.Exists(e.FullPath))
             {
                 // 檢查是否是工站目錄（以 S 開頭）
@@ -829,20 +1055,20 @@ namespace IndustrySegSys
                         {
                             AddLog($"檢測到新工站目錄: {Path.GetFileName(materialDirPath)}/{stationName}");
                         });
-                        
+
                         // 重新處理料號目錄（會包含新創建的工站）
                         // 先從已處理列表中移除，以便重新處理
                         lock (_processingLock)
                         {
                             _processedMaterialDirs.Remove(materialDirPath);
                         }
-                        
+
                         await ProcessMaterialDirectory(materialDirPath);
                     }
                 }
             }
         }
-        
+
         private void FileSystemWatcher_Error(object sender, ErrorEventArgs e)
         {
             InvokeUI(() =>
@@ -850,14 +1076,14 @@ namespace IndustrySegSys
                 AddLog($"監控錯誤: {e.GetException().Message}");
             });
         }
-        
+
         private async Task ProcessExistingDirectories(string watchPath)
         {
             try
             {
                 var directories = Directory.GetDirectories(watchPath);
                 AddLog($"發現 {directories.Length} 個現有目錄，開始處理...");
-                
+
                 foreach (var dir in directories)
                 {
                     await ProcessMaterialDirectory(dir);
@@ -870,9 +1096,9 @@ namespace IndustrySegSys
                 AddLog($"處理現有目錄時發生錯誤: {ex.Message}");
             }
         }
-        
+
         // ========== 圖像處理 ==========
-        
+
         private async Task ProcessMaterialDirectory(string materialDirPath)
         {
             lock (_processingLock)
@@ -883,7 +1109,7 @@ namespace IndustrySegSys
                 }
                 _processedMaterialDirs.Add(materialDirPath);
             }
-            
+
             await Task.Run(async () =>
             {
                 try
@@ -894,13 +1120,13 @@ namespace IndustrySegSys
                         currentMaterialLabel.Text = $"當前料號: {materialDirName}";
                         AddLog($"檢測到新料號目錄: {materialDirName}");
                     });
-                    
+
                     // 獲取所有工站目錄
                     var stationDirs = Directory.GetDirectories(materialDirPath)
                         .Where(d => Path.GetFileName(d).StartsWith("S", StringComparison.OrdinalIgnoreCase))
                         .OrderBy(d => d)
                         .ToList();
-                    
+
                     if (stationDirs.Count == 0)
                     {
                         InvokeUI(() =>
@@ -909,7 +1135,7 @@ namespace IndustrySegSys
                         });
                         return;
                     }
-                    
+
                     // 處理每個工站的圖片
                     var allImageFiles = new List<string>();
                     foreach (var stationDir in stationDirs)
@@ -917,21 +1143,21 @@ namespace IndustrySegSys
                         var stationName = Path.GetFileName(stationDir);
                         var imageExtensions = new[] { "*.jpg", "*.jpeg", "*.png", "*.bmp", "*.gif" };
                         var stationImages = new List<string>();
-                        
+
                         foreach (var extension in imageExtensions)
                         {
                             stationImages.AddRange(Directory.GetFiles(stationDir, extension, SearchOption.TopDirectoryOnly));
                         }
-                        
+
                         stationImages = stationImages.OrderBy(f => f).ToList();
                         allImageFiles.AddRange(stationImages);
-                        
+
                         InvokeUI(() =>
                         {
                             AddLog($"  工站 {stationName}: {stationImages.Count} 張圖片");
                         });
                     }
-                    
+
                     if (allImageFiles.Count == 0)
                     {
                         InvokeUI(() =>
@@ -940,7 +1166,7 @@ namespace IndustrySegSys
                         });
                         return;
                     }
-                    
+
                     // 獲取參數
                     double confidence = 0.24;
                     double pixelConfidence = 0.5;
@@ -951,7 +1177,7 @@ namespace IndustrySegSys
                         pixelConfidence = pixelConfidenceTrackBar.Value / 100.0;
                         iou = iouTrackBar.Value / 100.0;
                     });
-                    
+
                     // 處理所有圖片
                     foreach (var imagePath in allImageFiles)
                     {
@@ -960,13 +1186,13 @@ namespace IndustrySegSys
                         {
                             var fileName = Path.GetFileName(imagePath);
                             var relativePath = Path.GetRelativePath(materialDirPath, imagePath);
-                            
+
                             InvokeUI(() =>
                             {
                                 currentFileLabel.Text = $"當前文件: {materialDirName}/{relativePath}";
                                 AddLog($"  處理: {relativePath}");
                             });
-                            
+
                             // 加載圖片
                             using var image = SKBitmap.Decode(imagePath);
                             if (image == null)
@@ -977,13 +1203,13 @@ namespace IndustrySegSys
                                 });
                                 continue;
                             }
-                            
+
                             // 運行檢測
                             var results = _yolo!.RunSegmentation(image, confidence: confidence, pixelConfedence: pixelConfidence, iou: iou);
-                            
+
                             stopwatch.Stop();
                             var processingTime = stopwatch.ElapsedMilliseconds;
-                            
+
                             // 確定結果
                             string suffix;
                             bool isNg = results.Count > 0;
@@ -1005,36 +1231,36 @@ namespace IndustrySegSys
                                     AddLog($"    -> 未檢測到目標，標記為 OK");
                                 });
                             }
-                            
+
                             // 繪製結果
                             image.Draw(results, _drawingOptions);
-                            
+
                             // 保存結果
                             var fileExtension = Path.GetExtension(imagePath);
                             var outputMaterialDir = Path.Combine(_outputFolder, materialDirName);
                             var outputStationDir = Path.Combine(outputMaterialDir, Path.GetFileName(Path.GetDirectoryName(imagePath)!));
                             Directory.CreateDirectory(outputStationDir);
-                            
+
                             var newFileName = $"{Path.GetFileNameWithoutExtension(imagePath)}_{suffix}{fileExtension}";
                             var outputPath = Path.Combine(outputStationDir, newFileName);
-                            
+
                             var encodedFormat = GetEncodedFormat(fileExtension);
                             image.Save(outputPath, encodedFormat, 80);
-                            
+
                             // 保存 JSON 檔案（如果啟用）
                             bool shouldGenerateJson = false;
                             InvokeUI(() =>
                             {
                                 shouldGenerateJson = generateJsonRadio.Checked;
                             });
-                            
+
                             if (shouldGenerateJson)
                             {
                                 SaveJsonFile(outputPath, "監控模式", confidence, pixelConfidence, iou, results);
                             }
-                            
+
                             Interlocked.Increment(ref _totalCount);
-                            
+
                             // 轉換為 Bitmap 並更新顯示
                             var bitmap = SKBitmapToBitmap(image);
                             InvokeUI(() =>
@@ -1066,9 +1292,9 @@ namespace IndustrySegSys
                 }
             });
         }
-        
+
         // ========== 其他方法 ==========
-        
+
         private SKEncodedImageFormat GetEncodedFormat(string extension)
         {
             return extension.ToLowerInvariant() switch
@@ -1081,7 +1307,7 @@ namespace IndustrySegSys
                 _ => SKEncodedImageFormat.Jpeg
             };
         }
-        
+
         private void UpdateProcessButtonStates()
         {
             // 只在手動模式下更新按鈕狀態
@@ -1089,31 +1315,31 @@ namespace IndustrySegSys
             {
                 return;
             }
-            
+
             bool hasModelPath = !string.IsNullOrWhiteSpace(modelPathTextBox.Text) && File.Exists(modelPathTextBox.Text);
             bool hasOutputPath = !string.IsNullOrWhiteSpace(outputPathTextBox.Text);
-            
+
             // 檢查單文件路徑
             bool hasSingleFilePath = !string.IsNullOrWhiteSpace(singleFileTextBox.Text);
             bool isValidSingleFile = hasSingleFilePath && File.Exists(singleFileTextBox.Text) && !Directory.Exists(singleFileTextBox.Text);
             processSingleFileButton.Enabled = hasModelPath && hasOutputPath && isValidSingleFile;
-            
+
             // 檢查批量處理路徑
             bool hasBatchFilePath = !string.IsNullOrWhiteSpace(batchFileTextBox.Text);
             bool isValidBatchDirectory = hasBatchFilePath && Directory.Exists(batchFileTextBox.Text) && !File.Exists(batchFileTextBox.Text);
             processBatchButton.Enabled = hasModelPath && hasOutputPath && isValidBatchDirectory;
         }
-        
+
         private void InitializeDefaultPaths()
         {
             // 嘗試查找項目根目錄
             var currentDir = new DirectoryInfo(Directory.GetCurrentDirectory());
             var projectRoot = FindProjectRoot(currentDir);
-            
+
             // 設置默認路徑
             string? defaultModelPath = null;
             string? defaultOutputPath = null;
-            
+
             if (projectRoot != null)
             {
                 // 模型文件預設路徑：項目根目錄下的 test\assets\Models\sd900.onnx
@@ -1122,13 +1348,13 @@ namespace IndustrySegSys
                 {
                     defaultModelPath = sd900Model;
                 }
-                
+
                 // 輸出目錄預設路徑：項目根目錄下的 Output 目錄
                 // 先檢查是否已存在（不區分大小寫），如果存在則使用實際的路徑
                 var existingDirs = Directory.GetDirectories(projectRoot);
-                var existingOutputDir = existingDirs.FirstOrDefault(d => 
+                var existingOutputDir = existingDirs.FirstOrDefault(d =>
                     string.Equals(Path.GetFileName(d), "Output", StringComparison.OrdinalIgnoreCase));
-                
+
                 string outputDir;
                 if (existingOutputDir != null)
                 {
@@ -1140,7 +1366,7 @@ namespace IndustrySegSys
                     // 創建新目錄，使用大寫 Output
                     outputDir = Path.Combine(projectRoot, "Output");
                 }
-                
+
                 try
                 {
                     // 如果目錄不存在，創建它
@@ -1157,24 +1383,24 @@ namespace IndustrySegSys
                     defaultOutputPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Desktop), "Industry_Results");
                 }
             }
-            
+
             // 如果找不到項目根目錄，使用桌面目錄作為備用
             if (defaultOutputPath == null)
             {
                 defaultOutputPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Desktop), "Industry_Results");
             }
-            
+
             // 嘗試從 JSON 文件讀取路徑配置
             var configPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "config.json");
             var invalidPaths = new List<string>();
-            
+
             if (File.Exists(configPath))
             {
                 try
                 {
                     var jsonContent = File.ReadAllText(configPath);
                     var config = JsonSerializer.Deserialize<PathConfig>(jsonContent);
-                    
+
                     if (config != null)
                     {
                         // 檢查並應用模型路徑
@@ -1197,7 +1423,7 @@ namespace IndustrySegSys
                         {
                             modelPathTextBox.Text = defaultModelPath;
                         }
-                        
+
                         // 檢查並應用監控目錄路徑
                         if (!string.IsNullOrEmpty(config.WatchPath))
                         {
@@ -1210,7 +1436,7 @@ namespace IndustrySegSys
                                 invalidPaths.Add($"監控目錄路徑無效: {config.WatchPath}");
                             }
                         }
-                        
+
                         // 檢查並應用輸出目錄路徑
                         if (!string.IsNullOrEmpty(config.OutputPath))
                         {
@@ -1226,7 +1452,7 @@ namespace IndustrySegSys
                                     AddLog($"檢測到舊的預設輸出目錄，已自動更新為新的預設路徑");
                                 }
                             }
-                            
+
                             try
                             {
                                 if (!Directory.Exists(outputPathToUse))
@@ -1235,7 +1461,7 @@ namespace IndustrySegSys
                                 }
                                 _outputFolder = outputPathToUse;
                                 outputPathTextBox.Text = outputPathToUse;
-                                
+
                                 // 如果路徑被更新，保存到配置文件
                                 if (outputPathToUse != config.OutputPath)
                                 {
@@ -1254,7 +1480,7 @@ namespace IndustrySegSys
                             _outputFolder = defaultOutputPath;
                             outputPathTextBox.Text = defaultOutputPath;
                         }
-                        
+
                         // 檢查並應用單文件路徑
                         if (!string.IsNullOrEmpty(config.SingleFilePath))
                         {
@@ -1267,7 +1493,7 @@ namespace IndustrySegSys
                                 invalidPaths.Add($"單文件路徑無效: {config.SingleFilePath}");
                             }
                         }
-                        
+
                         // 檢查並應用批量處理路徑
                         if (!string.IsNullOrEmpty(config.BatchFilePath))
                         {
@@ -1280,10 +1506,10 @@ namespace IndustrySegSys
                                 invalidPaths.Add($"批量處理路徑無效: {config.BatchFilePath}");
                             }
                         }
-                        
+
                         // 更新按鈕狀態
                         UpdateProcessButtonStates();
-                        
+
                         // 如果有無效路徑，顯示提示訊息
                         if (invalidPaths.Count > 0)
                         {
@@ -1295,13 +1521,13 @@ namespace IndustrySegSys
                         {
                             AddLog("已從配置文件讀取路徑設置");
                         }
-                        
+
                         // 保存更新後的路徑（如果有無效路徑被修正）
                         if (invalidPaths.Count > 0)
                         {
                             SavePathsToConfig();
                         }
-                        
+
                         return;
                     }
                 }
@@ -1311,7 +1537,7 @@ namespace IndustrySegSys
                     MessageBox.Show($"讀取配置文件失敗: {ex.Message}\n\n將使用預設路徑。", "配置文件錯誤", MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 }
             }
-            
+
             // 如果沒有配置文件，創建一個默認的配置文件
             try
             {
@@ -1321,47 +1547,71 @@ namespace IndustrySegSys
                     WatchPath = string.Empty,
                     OutputPath = defaultOutputPath,
                     SingleFilePath = string.Empty,
-                    BatchFilePath = string.Empty
+                    BatchFilePath = string.Empty,
+                    MainSplitterRatio = 0.3333,  // 預設平均分布：圖片區域 33.33%
+                    RightSplitterRatio = 0.5     // 預設平均分布：終端和 JSON 各 50%
                 };
-                
+
                 var jsonContent = JsonSerializer.Serialize(defaultConfig, new JsonSerializerOptions { WriteIndented = true });
                 File.WriteAllText(configPath, jsonContent);
                 AddLog("已創建默認配置文件");
+                // 布局比例將在 MainForm_Load 中應用
             }
             catch (Exception ex)
             {
                 AddLog($"創建配置文件失敗: {ex.Message}");
             }
-            
+
             // 使用默認值
             _outputFolder = defaultOutputPath;
             outputPathTextBox.Text = defaultOutputPath;
-            
+
             if (defaultModelPath != null)
             {
                 modelPathTextBox.Text = defaultModelPath;
             }
-            
+
             // 初始化完成後，更新按鈕狀態
             if (manualModeRadio.Checked)
             {
                 UpdateProcessButtonStates();
             }
         }
-        
+
         private void SavePathsToConfig()
         {
             try
             {
+                // 計算當前布局比例
+                double? mainRatio = null;
+                double? rightRatio = null;
+
+                // 依 SplitContainer 的 Orientation 決定用 Height 或 Width
+                if (mainSplitContainer != null)
+                {
+                    var total = GetSplitTotalLength(mainSplitContainer);
+                    if (total > 0)
+                        mainRatio = (double)mainSplitContainer.SplitterDistance / total;
+                }
+
+                if (rightSplitContainer != null)
+                {
+                    var total = GetSplitTotalLength(rightSplitContainer);
+                    if (total > 0)
+                        rightRatio = (double)rightSplitContainer.SplitterDistance / total;
+                }
+
                 var config = new PathConfig
                 {
                     ModelPath = modelPathTextBox.Text,
                     WatchPath = watchPathTextBox.Text,
                     OutputPath = outputPathTextBox.Text,
                     SingleFilePath = singleFileTextBox.Text,
-                    BatchFilePath = batchFileTextBox.Text
+                    BatchFilePath = batchFileTextBox.Text,
+                    MainSplitterRatio = mainRatio,
+                    RightSplitterRatio = rightRatio
                 };
-                
+
                 var configPath = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "config.json");
                 var jsonContent = JsonSerializer.Serialize(config, new JsonSerializerOptions { WriteIndented = true });
                 File.WriteAllText(configPath, jsonContent);
@@ -1371,7 +1621,7 @@ namespace IndustrySegSys
                 AddLog($"保存配置文件失敗: {ex.Message}");
             }
         }
-        
+
         private class PathConfig
         {
             public string? ModelPath { get; set; }
@@ -1379,8 +1629,10 @@ namespace IndustrySegSys
             public string? OutputPath { get; set; }
             public string? SingleFilePath { get; set; }
             public string? BatchFilePath { get; set; }
+            public double? MainSplitterRatio { get; set; }  // 主分隔線比例（圖片區域佔比）
+            public double? RightSplitterRatio { get; set; }  // 右側分隔線比例（終端區域佔比）
         }
-        
+
         private string? FindProjectRoot(DirectoryInfo? dir)
         {
             while (dir != null)
@@ -1394,7 +1646,7 @@ namespace IndustrySegSys
             }
             return null;
         }
-        
+
         private void PreviousImageButton_Click(object sender, EventArgs e)
         {
             if (_currentImageIndex > 0)
@@ -1403,7 +1655,7 @@ namespace IndustrySegSys
                 ShowImageAtIndex(_currentImageIndex);
             }
         }
-        
+
         private void NextImageButton_Click(object sender, EventArgs e)
         {
             if (_currentImageIndex < _resultBitmaps.Count - 1)
@@ -1412,7 +1664,7 @@ namespace IndustrySegSys
                 ShowImageAtIndex(_currentImageIndex);
             }
         }
-        
+
         private void OpenOutputFolderButton_Click(object sender, EventArgs e)
         {
             if (string.IsNullOrWhiteSpace(_outputFolder) || !Directory.Exists(_outputFolder))
@@ -1420,29 +1672,29 @@ namespace IndustrySegSys
                 MessageBox.Show("輸出目錄不存在！", "錯誤", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return;
             }
-            
+
             System.Diagnostics.Process.Start("explorer.exe", _outputFolder);
         }
-        
+
         // ========== 手動處理模式方法 ==========
-        
+
         private async void StartButton_Click(object sender, EventArgs e)
         {
             // StartButton 已移除，現在使用獨立的處理按鈕（processSingleFileButton 和 processBatchButton）
             // 保留此方法以避免 Designer 錯誤，但方法為空
         }
-        
+
         private void StopButton_Click(object sender, EventArgs e)
         {
             _cancellationTokenSource?.Cancel();
             AddLog("正在停止處理...");
             statusLabel.Text = "正在停止...";
-            
+
             // 重新啟用處理按鈕
             processSingleFileButton.Enabled = true;
             processBatchButton.Enabled = true;
         }
-        
+
         private async void ProcessSingleFileButton_Click(object sender, EventArgs e)
         {
             // 驗證輸入
@@ -1451,32 +1703,32 @@ namespace IndustrySegSys
                 MessageBox.Show("請選擇有效的模型文件！", "錯誤", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return;
             }
-            
+
             if (string.IsNullOrWhiteSpace(singleFileTextBox.Text) || !File.Exists(singleFileTextBox.Text))
             {
                 MessageBox.Show("請選擇有效的圖片文件！", "錯誤", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return;
             }
-            
+
             if (string.IsNullOrWhiteSpace(outputPathTextBox.Text))
             {
                 MessageBox.Show("請選擇輸出目錄！", "錯誤", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return;
             }
-            
+
             // 創建輸出目錄
             _outputFolder = outputPathTextBox.Text;
             if (!Directory.Exists(_outputFolder))
             {
                 Directory.CreateDirectory(_outputFolder);
             }
-            
+
             // 初始化 Yolo
             try
             {
                 AddLog("正在初始化模型...");
                 statusLabel.Text = "正在初始化模型...";
-                
+
                 _yolo?.Dispose();
                 _yolo = new Yolo(new YoloOptions
                 {
@@ -1484,7 +1736,7 @@ namespace IndustrySegSys
                     ImageResize = ImageResize.Stretched,
                     SamplingOptions = new(SKFilterMode.Nearest, SKMipmapMode.None)
                 });
-                
+
                 AddLog($"模型加載成功: {_yolo.ModelInfo}");
                 statusLabel.Text = "模型加載成功";
             }
@@ -1494,7 +1746,7 @@ namespace IndustrySegSys
                 AddLog($"模型初始化失敗: {ex.Message}");
                 return;
             }
-            
+
             // 重置統計信息和圖片列表
             _totalCount = 0;
             _ngCount = 0;
@@ -1502,22 +1754,22 @@ namespace IndustrySegSys
             _currentImageIndex = -1;
             ClearResultBitmaps();
             UpdateStatistics();
-            
+
             // 禁用/啟用按鈕
             processSingleFileButton.Enabled = false;
             processBatchButton.Enabled = false;
             stopButton.Enabled = true;
             progressBar.Value = 0;
             imageControlPanel.Visible = false;
-            
+
             // 創建取消令牌
             _cancellationTokenSource = new CancellationTokenSource();
-            
+
             // 獲取參數值
             var confidence = confidenceTrackBar.Value / 100.0;
             var pixelConfidence = pixelConfidenceTrackBar.Value / 100.0;
             var iou = iouTrackBar.Value / 100.0;
-            
+
             // 開始處理單文件
             try
             {
@@ -1541,7 +1793,7 @@ namespace IndustrySegSys
                 statusLabel.Text = "就緒";
             }
         }
-        
+
         private async void ProcessBatchButton_Click(object sender, EventArgs e)
         {
             // 驗證輸入
@@ -1550,32 +1802,32 @@ namespace IndustrySegSys
                 MessageBox.Show("請選擇有效的模型文件！", "錯誤", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return;
             }
-            
+
             if (string.IsNullOrWhiteSpace(batchFileTextBox.Text) || !Directory.Exists(batchFileTextBox.Text))
             {
                 MessageBox.Show("請選擇有效的批量處理目錄！", "錯誤", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return;
             }
-            
+
             if (string.IsNullOrWhiteSpace(outputPathTextBox.Text))
             {
                 MessageBox.Show("請選擇輸出目錄！", "錯誤", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return;
             }
-            
+
             // 創建輸出目錄
             _outputFolder = outputPathTextBox.Text;
             if (!Directory.Exists(_outputFolder))
             {
                 Directory.CreateDirectory(_outputFolder);
             }
-            
+
             // 初始化 Yolo
             try
             {
                 AddLog("正在初始化模型...");
                 statusLabel.Text = "正在初始化模型...";
-                
+
                 _yolo?.Dispose();
                 _yolo = new Yolo(new YoloOptions
                 {
@@ -1583,7 +1835,7 @@ namespace IndustrySegSys
                     ImageResize = ImageResize.Stretched,
                     SamplingOptions = new(SKFilterMode.Nearest, SKMipmapMode.None)
                 });
-                
+
                 AddLog($"模型加載成功: {_yolo.ModelInfo}");
                 statusLabel.Text = "模型加載成功";
             }
@@ -1593,7 +1845,7 @@ namespace IndustrySegSys
                 AddLog($"模型初始化失敗: {ex.Message}");
                 return;
             }
-            
+
             // 重置統計信息和圖片列表
             _totalCount = 0;
             _ngCount = 0;
@@ -1601,22 +1853,22 @@ namespace IndustrySegSys
             _currentImageIndex = -1;
             ClearResultBitmaps();
             UpdateStatistics();
-            
+
             // 禁用/啟用按鈕
             processSingleFileButton.Enabled = false;
             processBatchButton.Enabled = false;
             stopButton.Enabled = true;
             progressBar.Value = 0;
             imageControlPanel.Visible = false;
-            
+
             // 創建取消令牌
             _cancellationTokenSource = new CancellationTokenSource();
-            
+
             // 獲取參數值
             var confidence = confidenceTrackBar.Value / 100.0;
             var pixelConfidence = pixelConfidenceTrackBar.Value / 100.0;
             var iou = iouTrackBar.Value / 100.0;
-            
+
             // 開始批量處理
             try
             {
@@ -1640,7 +1892,7 @@ namespace IndustrySegSys
                 statusLabel.Text = "就緒";
             }
         }
-        
+
         private async Task ProcessSingleFile(string imagePath, double confidence, double pixelConfidence, double iou, CancellationToken cancellationToken)
         {
             // 重置計數器
@@ -1653,14 +1905,14 @@ namespace IndustrySegSys
                 progressBar.Maximum = 1;
                 progressBar.Value = 0;
             });
-            
+
             await Task.Run(() =>
             {
                 var stopwatch = System.Diagnostics.Stopwatch.StartNew();
                 try
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    
+
                     var fileName = Path.GetFileName(imagePath);
                     InvokeUI(() =>
                     {
@@ -1668,20 +1920,20 @@ namespace IndustrySegSys
                         AddLog($"處理: {fileName}");
                         statusLabel.Text = $"正在處理: {fileName}";
                     });
-                    
+
                     // 加載圖片
                     using var image = SKBitmap.Decode(imagePath);
                     if (image == null)
                     {
                         throw new Exception($"無法加載圖片: {imagePath}");
                     }
-                    
+
                     // 運行檢測
                     var results = _yolo!.RunSegmentation(image, confidence: confidence, pixelConfedence: pixelConfidence, iou: iou);
-                    
+
                     stopwatch.Stop();
                     var processingTime = stopwatch.ElapsedMilliseconds;
-                    
+
                     // 確定結果
                     string suffix;
                     _totalCount++;
@@ -1703,30 +1955,30 @@ namespace IndustrySegSys
                             AddLog($"  -> 未檢測到目標，標記為 OK");
                         });
                     }
-                    
+
                     // 繪製結果
                     image.Draw(results, _drawingOptions);
-                    
+
                     // 保存結果
                     var fileExtension = Path.GetExtension(imagePath);
                     var newFileName = $"{Path.GetFileNameWithoutExtension(imagePath)}_{suffix}{fileExtension}";
                     var outputPath = Path.Combine(_outputFolder, newFileName);
-                    
+
                     var encodedFormat = GetEncodedFormat(fileExtension);
                     image.Save(outputPath, encodedFormat, 80);
-                    
+
                     // 保存 JSON 檔案（如果啟用）
                     bool shouldGenerateJson = false;
                     InvokeUI(() =>
                     {
                         shouldGenerateJson = generateJsonRadio.Checked;
                     });
-                    
+
                     if (shouldGenerateJson)
                     {
                         SaveJsonFile(outputPath, "手動模式-單文件", confidence, pixelConfidence, iou, results);
                     }
-                    
+
                     // 轉換為 Bitmap 並更新顯示
                     var bitmap = SKBitmapToBitmap(image);
                     InvokeUI(() =>
@@ -1739,7 +1991,7 @@ namespace IndustrySegSys
                         AddLog($"  -> 已保存到: {outputPath}");
                         UpdateStatistics();
                         progressBar.Value = 1;
-                        
+
                         if (_resultBitmaps.Count > 0)
                         {
                             UpdateImageNavigation();
@@ -1759,7 +2011,7 @@ namespace IndustrySegSys
                 }
             }, cancellationToken);
         }
-        
+
         private async Task ProcessBatchFiles(string imageDirectory, double confidence, double pixelConfidence, double iou, CancellationToken cancellationToken)
         {
             // 獲取所有圖片文件
@@ -1769,7 +2021,7 @@ namespace IndustrySegSys
             {
                 imageFiles.AddRange(Directory.GetFiles(imageDirectory, extension, SearchOption.TopDirectoryOnly));
             }
-            
+
             if (imageFiles.Count == 0)
             {
                 InvokeUI(() =>
@@ -1778,7 +2030,7 @@ namespace IndustrySegSys
                 });
                 return;
             }
-            
+
             // 重置計數器
             _totalCount = 0;
             _ngCount = 0;
@@ -1789,15 +2041,15 @@ namespace IndustrySegSys
                 progressBar.Maximum = imageFiles.Count;
                 progressBar.Value = 0;
             });
-            
+
             int processedCount = 0;
-            
+
             await Task.Run(() =>
             {
                 foreach (var imagePath in imageFiles)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    
+
                     var stopwatch = System.Diagnostics.Stopwatch.StartNew();
                     try
                     {
@@ -1808,7 +2060,7 @@ namespace IndustrySegSys
                             AddLog($"處理: {fileName}");
                             statusLabel.Text = $"正在處理: {fileName} ({processedCount + 1}/{imageFiles.Count})";
                         });
-                        
+
                         // 加載圖片
                         using var image = SKBitmap.Decode(imagePath);
                         if (image == null)
@@ -1819,13 +2071,13 @@ namespace IndustrySegSys
                             });
                             continue;
                         }
-                        
+
                         // 運行檢測
                         var results = _yolo!.RunSegmentation(image, confidence: confidence, pixelConfedence: pixelConfidence, iou: iou);
-                        
+
                         stopwatch.Stop();
                         var processingTime = stopwatch.ElapsedMilliseconds;
-                        
+
                         // 確定結果
                         string suffix;
                         _totalCount++;
@@ -1847,32 +2099,32 @@ namespace IndustrySegSys
                                 AddLog($"  -> 未檢測到目標，標記為 OK");
                             });
                         }
-                        
+
                         // 繪製結果
                         image.Draw(results, _drawingOptions);
-                        
+
                         // 保存結果
                         var fileExtension = Path.GetExtension(imagePath);
                         var newFileName = $"{Path.GetFileNameWithoutExtension(imagePath)}_{suffix}{fileExtension}";
                         var outputPath = Path.Combine(_outputFolder, newFileName);
-                        
+
                         var encodedFormat = GetEncodedFormat(fileExtension);
                         image.Save(outputPath, encodedFormat, 80);
-                        
+
                         // 保存 JSON 檔案（如果啟用）
                         bool shouldGenerateJson = false;
                         InvokeUI(() =>
                         {
                             shouldGenerateJson = generateJsonRadio.Checked;
                         });
-                        
+
                         if (shouldGenerateJson)
                         {
                             SaveJsonFile(outputPath, "手動模式-批量處理", confidence, pixelConfidence, iou, results);
                         }
-                        
+
                         processedCount++;
-                        
+
                         // 轉換為 Bitmap 並更新顯示
                         var bitmap = SKBitmapToBitmap(image);
                         InvokeUI(() =>
@@ -1901,23 +2153,23 @@ namespace IndustrySegSys
                     }
                 }
             }, cancellationToken);
-            
+
             InvokeUI(() =>
             {
                 AddLog($"處理完成！總共處理: {processedCount} 個文件");
                 statusLabel.Text = "處理完成";
-                
+
                 if (_resultBitmaps.Count > 0)
                 {
                     UpdateImageNavigation();
                 }
             });
         }
-        
+
         private void ClearResultBitmaps()
         {
             _currentResultBitmap = null;
-            
+
             foreach (var bitmap in _resultBitmaps)
             {
                 try
@@ -1929,7 +2181,7 @@ namespace IndustrySegSys
             _resultBitmaps.Clear();
             _resultImagePaths.Clear();
             _currentImageIndex = -1;
-            
+
             InvokeUI(() =>
             {
                 resultPictureBox.Image = null;
@@ -1938,9 +2190,9 @@ namespace IndustrySegSys
                 jsonInfoTextBox.Text = "查無該 JSON 訊息";
             });
         }
-        
+
         // ========== JSON 相關方法 ==========
-        
+
         private class DetectionResultJson
         {
             public string Mode { get; set; } = string.Empty;
@@ -1950,13 +2202,13 @@ namespace IndustrySegSys
             public int DetectionCount { get; set; }
             public List<DetectionInfo> Detections { get; set; } = new List<DetectionInfo>();
         }
-        
+
         private class DetectionInfo
         {
             public string Label { get; set; } = string.Empty;
             public double Confidence { get; set; }
         }
-        
+
         private void SaveJsonFile(string imageOutputPath, string mode, double confidence, double pixelConfidence, double iou, List<YoloDotNet.Models.Segmentation> results)
         {
             try
@@ -1975,7 +2227,7 @@ namespace IndustrySegSys
                         Confidence = r.Confidence
                     }).ToList()
                 };
-                
+
                 var options = new JsonSerializerOptions { WriteIndented = true };
                 var jsonContent = JsonSerializer.Serialize(jsonData, options);
                 File.WriteAllText(jsonPath, jsonContent);
@@ -1988,7 +2240,7 @@ namespace IndustrySegSys
                 });
             }
         }
-        
+
         private void LoadAndDisplayJson(string imagePath)
         {
             try
@@ -1998,7 +2250,7 @@ namespace IndustrySegSys
                 {
                     var jsonContent = File.ReadAllText(jsonPath);
                     var jsonData = JsonSerializer.Deserialize<DetectionResultJson>(jsonContent);
-                    
+
                     if (jsonData != null)
                     {
                         var displayText = $"模式: {jsonData.Mode}\r\n";
@@ -2006,7 +2258,7 @@ namespace IndustrySegSys
                         displayText += $"Pixel Confidence: {jsonData.PixelConfidence:F2}\r\n";
                         displayText += $"IoU: {jsonData.IoU:F2}\r\n";
                         displayText += $"檢測目標數: {jsonData.DetectionCount}\r\n";
-                        
+
                         if (jsonData.DetectionCount > 0)
                         {
                             displayText += $"\r\n瑕疵資訊:\r\n";
@@ -2020,7 +2272,7 @@ namespace IndustrySegSys
                         {
                             displayText += "\r\n未檢測到瑕疵";
                         }
-                        
+
                         jsonInfoTextBox.Text = displayText;
                     }
                     else
@@ -2038,12 +2290,12 @@ namespace IndustrySegSys
                 jsonInfoTextBox.Text = $"讀取 JSON 失敗: {ex.Message}";
             }
         }
-        
+
         protected override void OnFormClosing(FormClosingEventArgs e)
         {
             _cancellationTokenSource?.Cancel();
             _yolo?.Dispose();
-            
+
             // 停止所有監控器
             if (_fileSystemWatcher != null)
             {
@@ -2051,7 +2303,7 @@ namespace IndustrySegSys
                 _fileSystemWatcher.Dispose();
                 _fileSystemWatcher = null;
             }
-            
+
             lock (_processingLock)
             {
                 foreach (var watcher in _materialWatchers.Values)
@@ -2065,12 +2317,71 @@ namespace IndustrySegSys
                 }
                 _materialWatchers.Clear();
             }
-            
+
             // 釋放所有 Bitmap
             ClearResultBitmaps();
-            
+
             base.OnFormClosing(e);
         }
-    }
-}
+    
 
+private void InitSplitContainersSafe()
+        {
+            if (_splittersInitialized || _splitterInitInProgress)
+                return;
+
+            if (!this.IsHandleCreated)
+                return;
+
+            _splitterInitInProgress = true;
+
+            this.BeginInvoke(new Action(() =>
+            {
+                try
+                {
+                    if (mainSplitContainer != null)
+                        ApplySplitterSafe(mainSplitContainer, min1: 100, min2: 200, ratio: 0.33);
+
+                    if (rightSplitContainer != null)
+                        ApplySplitterSafe(rightSplitContainer, min1: 200, min2: 200, ratio: 0.50);
+
+                    _splittersInitialized = true;
+                }
+                finally
+                {
+                    _splitterInitInProgress = false;
+                }
+            }));
+        }
+
+        private static void ApplySplitterSafe(SplitContainer sc, int min1, int min2, double ratio)
+        {
+            int total = (sc.Orientation == Orientation.Horizontal) ? sc.Height : sc.Width;
+            if (total <= 0)
+                return;
+
+            // If too small, keep mins at 0 for now to avoid InvalidOperationException.
+            if (total <= (min1 + min2 + sc.SplitterWidth + 2))
+            {
+                sc.Panel1MinSize = 0;
+                sc.Panel2MinSize = 0;
+                return;
+            }
+
+            sc.Panel1MinSize = min1;
+            sc.Panel2MinSize = min2;
+
+            int minDistance = sc.Panel1MinSize;
+            int maxDistance = total - sc.Panel2MinSize;
+
+            if (maxDistance <= minDistance)
+                return;
+
+            int desired = (int)(total * ratio);
+            if (desired < minDistance) desired = minDistance;
+            if (desired > maxDistance) desired = maxDistance;
+
+            sc.SplitterDistance = desired;
+        }
+
+    } }

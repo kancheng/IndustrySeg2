@@ -39,6 +39,7 @@ namespace IndustrySegSys
         private Button processSingleFileButton;
         private Button processBatchButton;
         private Button openOutputFolderButton;
+        private FlowLayoutPanel buttonPanel;
 
         // 主內容區域
         private TableLayoutPanel mainContentPanel;
@@ -72,6 +73,10 @@ namespace IndustrySegSys
         private StatusStrip statusStrip;
         private ToolStripStatusLabel statusLabel;
         private ToolStripStatusLabel monitorStatusLabel;
+        
+        // SplitContainer 控件
+        private SplitContainer mainSplitContainer;
+        private SplitContainer rightSplitContainer;
 
         /// <summary>
         ///  Clean up any resources being used.
@@ -127,12 +132,13 @@ namespace IndustrySegSys
                 Text = "配置",
                 Dock = DockStyle.Top,
                 Padding = new Padding(12),
-                Height = 250
+                AutoSize = true,
+                AutoSizeMode = AutoSizeMode.GrowAndShrink
             };
 
             var configTable = new TableLayoutPanel
             {
-                Dock = DockStyle.Fill,
+                Dock = DockStyle.Top,
                 ColumnCount = 2,
                 RowCount = 4,
                 AutoSize = true
@@ -224,7 +230,8 @@ namespace IndustrySegSys
             configTable.Controls.Add(modePanel, 1, 1);
 
             // 第三行：手動模式圖片選擇（初始隱藏）
-            manualImagePanel = new Panel { Dock = DockStyle.Fill, Visible = false, MinimumSize = new Size(0, 90) };
+            // 手動模式的面板使用 AutoSize + Dock=Top，避免在 GroupBox 固定高度下被裁切
+            manualImagePanel = new Panel { Dock = DockStyle.Top, Visible = false, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, MinimumSize = new Size(0, 90) };
             
             var manualImageTable = new TableLayoutPanel 
             { 
@@ -351,7 +358,7 @@ namespace IndustrySegSys
 
         private void CreateControlButtons()
         {
-            var buttonPanel = new FlowLayoutPanel
+            buttonPanel = new FlowLayoutPanel
             {
                 Dock = DockStyle.Top,
                 Height = 50,
@@ -401,17 +408,41 @@ namespace IndustrySegSys
 
         private void CreateMainContent()
         {
-            mainContentPanel = new TableLayoutPanel
+            // 主 SplitContainer：上方（圖片）和下方（終端+JSON）
+            mainSplitContainer = new SplitContainer
             {
                 Dock = DockStyle.Fill,
-                ColumnCount = 3,
-                RowCount = 1
+                // 上下分割：上方(圖片) + 下方(終端 + JSON)
+                Orientation = Orientation.Horizontal,
+                SplitterWidth = 5,
+                Panel1MinSize = 0,
+                Panel2MinSize = 0, // set later after layout to avoid InvalidOperationException during init
+                FixedPanel = FixedPanel.None
             };
-            mainContentPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
-            mainContentPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 5F));
-            mainContentPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 300F));
+            mainSplitContainer.SplitterMoved += (s, e) => SavePathsToConfig();
+            
+            // 在首次顯示時設置合理的初始值
+            bool mainSplitInitialized = false;
+            mainSplitContainer.Resize += (s, e) =>
+            {
+                if (!mainSplitInitialized && mainSplitContainer.Height > 0)
+                {
+                    var minDistance = mainSplitContainer.Panel1MinSize;
+                    var maxDistance = mainSplitContainer.Height - mainSplitContainer.Panel2MinSize;
+                    if (maxDistance > minDistance)
+                    {
+                        var safeDistance = System.Math.Max(minDistance, System.Math.Min(mainSplitContainer.Height / 3, maxDistance));
+                        try
+                        {
+                            mainSplitContainer.SplitterDistance = safeDistance;
+                            mainSplitInitialized = true;
+                        }
+                        catch { }
+                    }
+                }
+            };
 
-            // 左側：圖片預覽區域
+            // 上方：圖片預覽區域
             imagePreviewGroupBox = new GroupBox
             {
                 Text = "檢測結果預覽",
@@ -472,24 +503,48 @@ namespace IndustrySegSys
             imagePanel.Controls.Add(imageControlPanel, 0, 1);
 
             imagePreviewGroupBox.Controls.Add(imagePanel);
-            mainContentPanel.Controls.Add(imagePreviewGroupBox, 0, 0);
+            mainSplitContainer.Panel1.Controls.Add(imagePreviewGroupBox);
 
-            // 中間：分隔線
-            var splitter = new Panel
+            // 下方 SplitContainer：終端顯示和 JSON 檢視
+            rightSplitContainer = new SplitContainer
             {
                 Dock = DockStyle.Fill,
-                BackColor = Color.LightGray,
-                Cursor = Cursors.VSplit
+                // 左右分割：左側(終端/統計/日誌) + 右側(JSON)
+                Orientation = Orientation.Vertical,
+                SplitterWidth = 5,
+                Panel1MinSize = 0,
+                Panel2MinSize = 0, // set later after layout to avoid InvalidOperationException during init
+                FixedPanel = FixedPanel.None
             };
-            mainContentPanel.Controls.Add(splitter, 1, 0);
+            rightSplitContainer.SplitterMoved += (s, e) => SavePathsToConfig();
+            
+            // 在首次顯示時設置合理的初始值
+            bool rightSplitInitialized = false;
+            rightSplitContainer.Resize += (s, e) =>
+            {
+                if (!rightSplitInitialized && rightSplitContainer.Width > 0)
+                {
+                    var minDistance = rightSplitContainer.Panel1MinSize;
+                    var maxDistance = rightSplitContainer.Width - rightSplitContainer.Panel2MinSize;
+                    if (maxDistance > minDistance)
+                    {
+                        var safeDistance = System.Math.Max(minDistance, System.Math.Min(rightSplitContainer.Width / 2, maxDistance));
+                        try
+                        {
+                            rightSplitContainer.SplitterDistance = safeDistance;
+                            rightSplitInitialized = true;
+                        }
+                        catch { }
+                    }
+                }
+            };
 
-            // 右側：信息面板
+            // 左側：終端顯示區域
             var infoPanel = new TableLayoutPanel
             {
                 Dock = DockStyle.Fill,
-                RowCount = 4
+                RowCount = 3
             };
-            infoPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             infoPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             infoPanel.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             infoPanel.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
@@ -574,30 +629,6 @@ namespace IndustrySegSys
             progressGroupBox.Controls.Add(progressPanel);
             infoPanel.Controls.Add(progressGroupBox, 0, 1);
 
-            // JSON 資訊顯示
-            jsonInfoGroupBox = new GroupBox
-            {
-                Text = "JSON 資訊",
-                Dock = DockStyle.Fill,
-                Padding = new Padding(5),
-                Margin = new Padding(0, 0, 0, 10)
-            };
-
-            jsonInfoTextBox = new TextBox
-            {
-                Multiline = true,
-                ReadOnly = true,
-                Dock = DockStyle.Fill,
-                ScrollBars = ScrollBars.Vertical,
-                Font = new Font("Consolas", 9F),
-                BackColor = Color.FromArgb(250, 250, 250),
-                ForeColor = Color.FromArgb(50, 50, 50),
-                Text = "查無該 JSON 訊息"
-            };
-
-            jsonInfoGroupBox.Controls.Add(jsonInfoTextBox);
-            infoPanel.Controls.Add(jsonInfoGroupBox, 0, 2);
-
             // 日誌
             logGroupBox = new GroupBox
             {
@@ -617,11 +648,38 @@ namespace IndustrySegSys
             };
 
             logGroupBox.Controls.Add(logTextBox);
-            infoPanel.Controls.Add(logGroupBox, 0, 3);
+            infoPanel.Controls.Add(logGroupBox, 0, 2);
 
-            mainContentPanel.Controls.Add(infoPanel, 2, 0);
+            // 終端顯示區域（左側）
+            rightSplitContainer.Panel1.Controls.Add(infoPanel);
 
-            this.Controls.Add(mainContentPanel);
+            // JSON 資訊顯示（右側）
+            jsonInfoGroupBox = new GroupBox
+            {
+                Text = "JSON 資訊",
+                Dock = DockStyle.Fill,
+                Padding = new Padding(10)
+            };
+
+            jsonInfoTextBox = new TextBox
+            {
+                Multiline = true,
+                ReadOnly = true,
+                Dock = DockStyle.Fill,
+                ScrollBars = ScrollBars.Vertical,
+                Font = new Font("Consolas", 9F),
+                BackColor = Color.FromArgb(250, 250, 250),
+                ForeColor = Color.FromArgb(50, 50, 50),
+                Text = "查無該 JSON 訊息"
+            };
+
+            jsonInfoGroupBox.Controls.Add(jsonInfoTextBox);
+            rightSplitContainer.Panel2.Controls.Add(jsonInfoGroupBox);
+
+            // 將下方 SplitContainer 添加到主 SplitContainer 的下方
+            mainSplitContainer.Panel2.Controls.Add(rightSplitContainer);
+
+            this.Controls.Add(mainSplitContainer);
         }
 
         private void CreateStatusBar()
@@ -643,8 +701,12 @@ namespace IndustrySegSys
 
         private void SetupLayout()
         {
-            // 設置控件層級順序（從上到下）
-            configGroupBox.BringToFront();
+            // Dock 佈局在 WinForms 會受 Z-order 影響：Fill 若在最前面可能蓋住 Top/Bottom。
+            // 固定順序：mainSplitContainer 在最底（先佔剩餘空間），上方是 configGroupBox，底部是 buttonPanel 和 statusStrip。
+            mainSplitContainer?.SendToBack();
+            configGroupBox?.BringToFront();
+            buttonPanel?.BringToFront();
+            statusStrip?.BringToFront();
         }
 
         #endregion
