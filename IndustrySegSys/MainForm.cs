@@ -6,6 +6,8 @@ using System.Linq;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Collections.Concurrent;
+using System.Threading.Channels;
 using System.Windows.Forms;
 using SkiaSharp;
 using YoloDotNet;
@@ -40,7 +42,19 @@ namespace IndustrySegSys
         private HashSet<string> _processedMaterialDirs = new HashSet<string>();
         private object _processingLock = new object();
 
-        public MainForm()
+        // 監控佇列與背景工作 (Producer/Consumer)
+        private readonly Channel<MonitorWorkItem> _monitorQueue = Channel.CreateUnbounded<MonitorWorkItem>(
+            new UnboundedChannelOptions { SingleReader = true, SingleWriter = false });
+        private Task? _monitorWorkerTask;
+        private CancellationTokenSource? _monitorCts;
+        private readonly ConcurrentDictionary<string, byte> _inFlightMaterials = new(StringComparer.OrdinalIgnoreCase);
+
+        // 推論門閥：避免 _yolo 在多執行緒同時推論 (thread-safety)
+        private readonly SemaphoreSlim _inferenceGate = new(1, 1);
+
+                private record MonitorWorkItem(string MaterialDirPath, string Reason);
+
+public MainForm()
         {
             InitializeComponent();
             // Ensure the window is large enough so SplitContainer min sizes will never break layout.
@@ -515,6 +529,47 @@ namespace IndustrySegSys
             }
         }
 
+private static async Task WaitFileReadyAsync(string path, CancellationToken ct)
+{
+    const int maxTry = 80; // 8s (80 * 100ms)
+    const int delayMs = 100;
+
+    long lastSize = -1;
+    for (int i = 0; i < maxTry; i++)
+    {
+        ct.ThrowIfCancellationRequested();
+
+        try
+        {
+            var fi = new FileInfo(path);
+            if (!fi.Exists)
+            {
+                await Task.Delay(delayMs, ct);
+                continue;
+            }
+
+            // 檔案大小需穩定（避免邊寫邊讀）
+            if (fi.Length == lastSize)
+            {
+                // 能開啟代表寫入鎖已釋放（或至少可讀）
+                using var _ = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read);
+                return;
+            }
+
+            lastSize = fi.Length;
+        }
+        catch
+        {
+            // still writing/locking
+        }
+
+        await Task.Delay(delayMs, ct);
+    }
+
+    throw new IOException($"File not ready: {path}");
+}
+
+
         private void AddLog(string message)
         {
             InvokeUI(() =>
@@ -523,7 +578,7 @@ namespace IndustrySegSys
                 logTextBox.AppendText($"[{timestamp}] {message}\r\n");
                 logTextBox.SelectionStart = logTextBox.Text.Length;
                 logTextBox.ScrollToCaret();
-            });
+            }, ct);
         }
 
         private void UpdateStatistics()
@@ -543,7 +598,7 @@ namespace IndustrySegSys
                 {
                     yieldRateLabel.Text = "0.00%";
                 }
-            });
+            }, ct);
         }
 
         // ========== SKBitmap 轉換為 Bitmap ==========
@@ -837,7 +892,54 @@ namespace IndustrySegSys
             }
         }
 
-        // ========== 監控功能 ==========
+        
+
+private void EnsureMonitorWorkerStarted()
+{
+    if (_monitorWorkerTask != null && !_monitorWorkerTask.IsCompleted) return;
+
+    _monitorCts?.Cancel();
+    _monitorCts?.Dispose();
+    _monitorCts = new CancellationTokenSource();
+
+    _monitorWorkerTask = Task.Run(() => MonitorWorkerLoopAsync(_monitorCts.Token));
+}
+
+private void EnqueueMaterialWork(string materialDirPath, string reason)
+{
+    if (string.IsNullOrWhiteSpace(materialDirPath)) return;
+    _monitorQueue.Writer.TryWrite(new MonitorWorkItem(materialDirPath, reason));
+}
+
+private async Task MonitorWorkerLoopAsync(CancellationToken ct)
+{
+    await foreach (var item in _monitorQueue.Reader.ReadAllAsync(ct))
+    {
+        ct.ThrowIfCancellationRequested();
+
+        // 去重：同一料號在處理中就略過（避免 Created 事件抖動導致重入）
+        if (!_inFlightMaterials.TryAdd(item.MaterialDirPath, 0))
+            continue;
+
+        try
+        {
+            await ProcessMaterialDirectory(item.MaterialDirPath, ct);
+        }
+        catch (OperationCanceledException)
+        {
+            // ignore
+        }
+        catch (Exception ex)
+        {
+            InvokeUI(() => AddLog($"[MonitorWorker] {item.MaterialDirPath} 失敗: {ex.Message}"));
+        }
+        finally
+        {
+            _inFlightMaterials.TryRemove(item.MaterialDirPath, out _);
+        }
+    }
+}
+// ========== 監控功能 ==========
 
         private async void StartMonitorButton_Click(object sender, EventArgs e)
         {
@@ -898,6 +1000,8 @@ namespace IndustrySegSys
             _processedMaterialDirs.Clear();
             UpdateStatistics();
 
+            EnsureMonitorWorkerStarted();
+
             // 啟動目錄監控
             try
             {
@@ -938,6 +1042,13 @@ namespace IndustrySegSys
                 _fileSystemWatcher.Error -= FileSystemWatcher_Error;
                 _fileSystemWatcher.Dispose();
                 _fileSystemWatcher = null;
+
+            // 停止背景監控工作
+            try
+            {
+                _monitorCts?.Cancel();
+            }
+            catch { }
             }
 
             // 停止所有料號目錄的監控器
@@ -986,7 +1097,7 @@ namespace IndustrySegSys
                 if (string.Equals(parentPath, watchPath, StringComparison.OrdinalIgnoreCase))
                 {
                     // 料號目錄
-                    await ProcessMaterialDirectory(e.FullPath);
+                    EnqueueMaterialWork(e.FullPath, "material_created");
                     CreateMaterialWatcher(e.FullPath);
                 }
             }
@@ -1063,7 +1174,7 @@ namespace IndustrySegSys
                             _processedMaterialDirs.Remove(materialDirPath);
                         }
 
-                        await ProcessMaterialDirectory(materialDirPath);
+                        EnqueueMaterialWork(materialDirPath, "station_created");
                     }
                 }
             }
@@ -1086,7 +1197,7 @@ namespace IndustrySegSys
 
                 foreach (var dir in directories)
                 {
-                    await ProcessMaterialDirectory(dir);
+                    EnqueueMaterialWork(dir, "existing_dir");
                     // 為每個料號目錄創建監控器
                     CreateMaterialWatcher(dir);
                 }
@@ -1099,7 +1210,7 @@ namespace IndustrySegSys
 
         // ========== 圖像處理 ==========
 
-        private async Task ProcessMaterialDirectory(string materialDirPath)
+        private async Task ProcessMaterialDirectory(string materialDirPath, CancellationToken ct)
         {
             lock (_processingLock)
             {
@@ -1119,7 +1230,7 @@ namespace IndustrySegSys
                     {
                         currentMaterialLabel.Text = $"當前料號: {materialDirName}";
                         AddLog($"檢測到新料號目錄: {materialDirName}");
-                    });
+                    }, ct);
 
                     // 獲取所有工站目錄
                     var stationDirs = Directory.GetDirectories(materialDirPath)
@@ -1181,6 +1292,7 @@ namespace IndustrySegSys
                     // 處理所有圖片
                     foreach (var imagePath in allImageFiles)
                     {
+                        ct.ThrowIfCancellationRequested();
                         var stopwatch = System.Diagnostics.Stopwatch.StartNew();
                         try
                         {
@@ -1193,8 +1305,12 @@ namespace IndustrySegSys
                                 AddLog($"  處理: {relativePath}");
                             });
 
+                            // 等待檔案寫入完成，避免讀到半檔
+                            await WaitFileReadyAsync(imagePath, ct);
+
                             // 加載圖片
-                            using var image = SKBitmap.Decode(imagePath);
+                            await WaitFileReadyAsync(imagePath, ct);
+                    using var image = SKBitmap.Decode(imagePath);
                             if (image == null)
                             {
                                 InvokeUI(() =>
@@ -1205,7 +1321,16 @@ namespace IndustrySegSys
                             }
 
                             // 運行檢測
-                            var results = _yolo!.RunSegmentation(image, confidence: confidence, pixelConfedence: pixelConfidence, iou: iou);
+                            await _inferenceGate.WaitAsync(ct);
+                            List<SegmentationBoundingBox> results;
+                            try
+                            {
+                                results = _yolo!.RunSegmentation(image, confidence: confidence, pixelConfedence: pixelConfidence, iou: iou);
+                            }
+                            finally
+                            {
+                                _inferenceGate.Release();
+                            }
 
                             stopwatch.Stop();
                             var processingTime = stopwatch.ElapsedMilliseconds;
@@ -1764,6 +1889,7 @@ namespace IndustrySegSys
 
             // 創建取消令牌
             _cancellationTokenSource = new CancellationTokenSource();
+            var ct = _cancellationTokenSource.Token;
 
             // 獲取參數值
             var confidence = confidenceTrackBar.Value / 100.0;
@@ -1863,6 +1989,7 @@ namespace IndustrySegSys
 
             // 創建取消令牌
             _cancellationTokenSource = new CancellationTokenSource();
+            var ct = _cancellationTokenSource.Token;
 
             // 獲取參數值
             var confidence = confidenceTrackBar.Value / 100.0;
@@ -1906,12 +2033,12 @@ namespace IndustrySegSys
                 progressBar.Value = 0;
             });
 
-            await Task.Run(() =>
+            await Task.Run(async () =>
             {
                 var stopwatch = System.Diagnostics.Stopwatch.StartNew();
                 try
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
+                    ct.ThrowIfCancellationRequested();
 
                     var fileName = Path.GetFileName(imagePath);
                     InvokeUI(() =>
@@ -1921,7 +2048,11 @@ namespace IndustrySegSys
                         statusLabel.Text = $"正在處理: {fileName}";
                     });
 
+                    // 等待檔案寫入完成，避免讀到半檔
+                    await WaitFileReadyAsync(imagePath, ct);
+
                     // 加載圖片
+                    await WaitFileReadyAsync(imagePath, ct);
                     using var image = SKBitmap.Decode(imagePath);
                     if (image == null)
                     {
@@ -1929,7 +2060,16 @@ namespace IndustrySegSys
                     }
 
                     // 運行檢測
-                    var results = _yolo!.RunSegmentation(image, confidence: confidence, pixelConfedence: pixelConfidence, iou: iou);
+                    await _inferenceGate.WaitAsync(ct);
+                    List<SegmentationBoundingBox> results;
+                    try
+                    {
+                        results = _yolo!.RunSegmentation(image, confidence: confidence, pixelConfedence: pixelConfidence, iou: iou);
+                    }
+                    finally
+                    {
+                        _inferenceGate.Release();
+                    }
 
                     stopwatch.Stop();
                     var processingTime = stopwatch.ElapsedMilliseconds;
@@ -2044,11 +2184,11 @@ namespace IndustrySegSys
 
             int processedCount = 0;
 
-            await Task.Run(() =>
+            await Task.Run(async () =>
             {
                 foreach (var imagePath in imageFiles)
                 {
-                    cancellationToken.ThrowIfCancellationRequested();
+                    ct.ThrowIfCancellationRequested();
 
                     var stopwatch = System.Diagnostics.Stopwatch.StartNew();
                     try
@@ -2062,7 +2202,8 @@ namespace IndustrySegSys
                         });
 
                         // 加載圖片
-                        using var image = SKBitmap.Decode(imagePath);
+                        await WaitFileReadyAsync(imagePath, ct);
+                    using var image = SKBitmap.Decode(imagePath);
                         if (image == null)
                         {
                             InvokeUI(() =>
@@ -2073,7 +2214,16 @@ namespace IndustrySegSys
                         }
 
                         // 運行檢測
-                        var results = _yolo!.RunSegmentation(image, confidence: confidence, pixelConfedence: pixelConfidence, iou: iou);
+                        await _inferenceGate.WaitAsync(ct);
+                        List<SegmentationBoundingBox> results;
+                        try
+                        {
+                            results = _yolo!.RunSegmentation(image, confidence: confidence, pixelConfedence: pixelConfidence, iou: iou);
+                        }
+                        finally
+                        {
+                            _inferenceGate.Release();
+                        }
 
                         stopwatch.Stop();
                         var processingTime = stopwatch.ElapsedMilliseconds;
