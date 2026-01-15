@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Drawing.Imaging;
 using System.IO;
 using System.Linq;
 using System.Text.Json;
@@ -9,6 +10,8 @@ using System.Threading.Tasks;
 using System.Collections.Concurrent;
 using System.Threading.Channels;
 using System.Windows.Forms;
+using AForge.Video;
+using AForge.Video.DirectShow;
 using SkiaSharp;
 using YoloDotNet;
 using YoloDotNet.Enums;
@@ -25,6 +28,7 @@ namespace IndustrySegSys
         private bool _splitterInitInProgress = false;
 
         private Yolo? _yolo;
+        private string? _currentModelPath; // 追蹤當前加載的模型路徑
         private SegmentationDrawingOptions _drawingOptions = default!;
         private Bitmap? _currentResultBitmap;
         private List<Bitmap> _resultBitmaps = new List<Bitmap>();
@@ -52,7 +56,15 @@ namespace IndustrySegSys
         // 推論門閥：避免 _yolo 在多執行緒同時推論 (thread-safety)
         private readonly SemaphoreSlim _inferenceGate = new(1, 1);
 
-                private record MonitorWorkItem(string MaterialDirPath, string Reason);
+        // 相機相關變數
+        private VideoCaptureDevice? _videoSource;
+        private FilterInfoCollection? _videoDevices;
+        private Bitmap? _currentCameraFrame;
+        private readonly object _cameraFrameLock = new object();
+        private bool _isCapturing = false;
+        private readonly SemaphoreSlim _cameraSaveSemaphore = new SemaphoreSlim(Environment.ProcessorCount, Environment.ProcessorCount);
+
+        private record MonitorWorkItem(string MaterialDirPath, string Reason);
 
 public MainForm()
         {
@@ -349,6 +361,7 @@ public MainForm()
                 if (monitorModeRadio.Checked)
                 {
                     manualImagePanel.Visible = false;
+                    cameraModePanel.Visible = false;
                     startMonitorButton.Visible = true;
                     stopMonitorButton.Visible = true;
                     startButton.Visible = false;
@@ -356,10 +369,14 @@ public MainForm()
                     processSingleFileButton.Visible = false;
                     processBatchButton.Visible = false;
                     progressGroupBox.Visible = false;
+                    // 斷開相機（如果已連接）
+                    DisconnectCamera();
                 }
             };
 
             manualModeRadio.CheckedChanged += ManualModeRadio_CheckedChanged;
+            
+            cameraModeRadio.CheckedChanged += CameraModeRadio_CheckedChanged;
 
             // 監聽單文件路徑 TextBox 的文本變化
             singleFileTextBox.TextChanged += (s, e) =>
@@ -506,13 +523,166 @@ public MainForm()
             }
             else
             {
-                // 當切換到監控模式時，隱藏手動模式的控件
+                // 當切換到其他模式時，隱藏手動模式的控件
                 manualImagePanel.Visible = false;
                 processSingleFileButton.Visible = false;
                 processBatchButton.Visible = false;
                 progressGroupBox.Visible = false;
-                AddLog("已切換回監控模式");
+                AddLog("已切換離開手動模式");
             }
+        }
+
+        private void CameraModeRadio_CheckedChanged(object sender, EventArgs e)
+        {
+            if (cameraModeRadio.Checked)
+            {
+                try
+                {
+                    // 隱藏其他模式的控件
+                    manualImagePanel.Visible = false;
+                    cameraModePanel.Visible = true;
+                    startMonitorButton.Visible = false;
+                    stopMonitorButton.Visible = false;
+                    processSingleFileButton.Visible = false;
+                    processBatchButton.Visible = false;
+                    progressGroupBox.Visible = false;
+                    
+                    // 初始化相機列表
+                    CheckForCameras();
+                    
+                    AddLog("已切換到相機模式");
+                }
+                catch (Exception ex)
+                {
+                    AddLog($"切換到相機模式時發生錯誤: {ex.Message}");
+                }
+            }
+            else
+            {
+                // 檢查相機是否已連接
+                if (_videoSource != null && _videoSource.IsRunning)
+                {
+                    // 阻止切換，恢復選中狀態
+                    cameraModeRadio.Checked = true;
+                    
+                    // 顯示提示對話框（異步顯示，避免阻塞）
+                    this.BeginInvoke(new Action(() =>
+                    {
+                        ShowCameraDisconnectDialog();
+                    }));
+                }
+                else
+                {
+                    // 相機未連接，允許切換
+                    cameraModePanel.Visible = false;
+                    AddLog("已切換離開相機模式");
+                }
+            }
+        }
+        
+        private void ShowCameraDisconnectDialog()
+        {
+            // 創建自定義對話框
+            var dialog = new Form
+            {
+                Text = "相機連接中",
+                FormBorderStyle = FormBorderStyle.FixedDialog,
+                StartPosition = FormStartPosition.CenterParent,
+                MaximizeBox = false,
+                MinimizeBox = false,
+                ShowInTaskbar = false,
+                Width = 400,
+                Height = 180,
+                BackColor = Color.White,
+                Font = new Font("Segoe UI", 9F)
+            };
+
+            // 提示標籤
+            var messageLabel = new Label
+            {
+                Text = "⚠️ 相機目前處於連接狀態。\n\n請先斷開相機後才能切換到其他模式。",
+                Dock = DockStyle.Top,
+                Padding = new Padding(20, 20, 20, 10),
+                AutoSize = false,
+                Height = 80,
+                TextAlign = ContentAlignment.MiddleLeft,
+                ForeColor = Color.FromArgb(30, 41, 59)
+            };
+
+            // 按鈕面板
+            var buttonPanel = new FlowLayoutPanel
+            {
+                Dock = DockStyle.Bottom,
+                Height = 60,
+                FlowDirection = FlowDirection.RightToLeft,
+                Padding = new Padding(10),
+                BackColor = Color.FromArgb(245, 247, 250)
+            };
+
+            // 取消按鈕
+            var cancelButton = new Button
+            {
+                Text = "取消",
+                DialogResult = DialogResult.Cancel,
+                Width = 100,
+                Height = 32,
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.FromArgb(241, 245, 249),
+                ForeColor = Color.FromArgb(30, 41, 59),
+                Font = new Font("Segoe UI", 9F),
+                Cursor = Cursors.Hand
+            };
+            cancelButton.FlatAppearance.BorderSize = 0;
+            cancelButton.FlatAppearance.MouseOverBackColor = Color.FromArgb(226, 232, 240);
+            cancelButton.Click += (s, e) => dialog.Close();
+
+            // 斷開相機按鈕
+            var disconnectButton = new Button
+            {
+                Text = "斷開相機",
+                Width = 120,
+                Height = 32,
+                FlatStyle = FlatStyle.Flat,
+                BackColor = Color.FromArgb(239, 68, 68),
+                ForeColor = Color.White,
+                Font = new Font("Segoe UI", 9F, FontStyle.Bold),
+                Cursor = Cursors.Hand
+            };
+            disconnectButton.FlatAppearance.BorderSize = 0;
+            disconnectButton.FlatAppearance.MouseOverBackColor = Color.FromArgb(220, 38, 38);
+            disconnectButton.Click += (s, e) =>
+            {
+                // 斷開相機
+                DisconnectCamera();
+                
+                // 關閉對話框
+                dialog.DialogResult = DialogResult.OK;
+                dialog.Close();
+                
+                // 等待一小段時間確保相機完全斷開
+                System.Threading.Thread.Sleep(100);
+                
+                // 允許切換模式（暫時取消事件處理，避免重複觸發）
+                cameraModeRadio.CheckedChanged -= CameraModeRadio_CheckedChanged;
+                try
+                {
+                    cameraModeRadio.Checked = false;
+                }
+                finally
+                {
+                    cameraModeRadio.CheckedChanged += CameraModeRadio_CheckedChanged;
+                }
+            };
+
+            buttonPanel.Controls.Add(cancelButton);
+            buttonPanel.Controls.Add(new Label { Width = 10 }); // 間距
+            buttonPanel.Controls.Add(disconnectButton);
+
+            dialog.Controls.Add(messageLabel);
+            dialog.Controls.Add(buttonPanel);
+
+            // 顯示對話框
+            dialog.ShowDialog(this);
         }
 
         // ========== 線程安全更新方法 ==========
@@ -578,7 +748,7 @@ private static async Task WaitFileReadyAsync(string path, CancellationToken ct)
                 logTextBox.AppendText($"[{timestamp}] {message}\r\n");
                 logTextBox.SelectionStart = logTextBox.Text.Length;
                 logTextBox.ScrollToCaret();
-            }, ct);
+            });
         }
 
         private void UpdateStatistics()
@@ -598,7 +768,7 @@ private static async Task WaitFileReadyAsync(string path, CancellationToken ct)
                 {
                     yieldRateLabel.Text = "0.00%";
                 }
-            }, ct);
+            });
         }
 
         // ========== SKBitmap 轉換為 Bitmap ==========
@@ -739,7 +909,63 @@ private static async Task WaitFileReadyAsync(string path, CancellationToken ct)
                     AddLog($"已選擇模型: {dialog.FileName}");
                     SavePathsToConfig();
                     UpdateProcessButtonStates();
+                    
+                    // 自動初始化新模型
+                    _ = LoadModelAsync();
                 }
+            }
+        }
+        
+        // 統一的模型加載方法
+        private async Task LoadModelAsync()
+        {
+            if (string.IsNullOrWhiteSpace(modelPathTextBox.Text) || !File.Exists(modelPathTextBox.Text))
+            {
+                AddLog("模型路徑無效，無法加載模型");
+                return;
+            }
+
+            try
+            {
+                InvokeUI(() =>
+                {
+                    AddLog("正在初始化模型...");
+                    statusLabel.Text = "正在初始化模型...";
+                });
+
+                // 在背景執行緒加載模型，避免阻塞UI
+                await Task.Run(() =>
+                {
+                    // 釋放舊模型
+                    _yolo?.Dispose();
+                    _yolo = null;
+
+                    // 加載新模型
+                    _yolo = new Yolo(new YoloOptions
+                    {
+                        ExecutionProvider = new CpuExecutionProvider(model: modelPathTextBox.Text),
+                        ImageResize = ImageResize.Stretched,
+                        SamplingOptions = new(SKFilterMode.Nearest, SKMipmapMode.None)
+                    });
+                });
+
+                // 更新當前模型路徑
+                _currentModelPath = modelPathTextBox.Text;
+
+                InvokeUI(() =>
+                {
+                    AddLog($"模型加載成功: {_yolo?.ModelInfo}");
+                    statusLabel.Text = "模型加載成功";
+                });
+            }
+            catch (Exception ex)
+            {
+                InvokeUI(() =>
+                {
+                    AddLog($"模型初始化失敗: {ex.Message}");
+                    statusLabel.Text = "模型加載失敗";
+                    MessageBox.Show($"模型初始化失敗: {ex.Message}", "錯誤", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                });
             }
         }
 
@@ -969,28 +1195,15 @@ private async Task MonitorWorkerLoopAsync(CancellationToken ct)
                 Directory.CreateDirectory(_outputFolder);
             }
 
-            // 初始化 Yolo
-            try
+            // 初始化 Yolo（如果尚未加載或模型路徑已改變）
+            if (_yolo == null || _currentModelPath == null || 
+                !_currentModelPath.Equals(modelPathTextBox.Text, StringComparison.OrdinalIgnoreCase))
             {
-                AddLog("正在初始化模型...");
-                statusLabel.Text = "正在初始化模型...";
-
-                _yolo?.Dispose();
-                _yolo = new Yolo(new YoloOptions
+                await LoadModelAsync();
+                if (_yolo == null)
                 {
-                    ExecutionProvider = new CpuExecutionProvider(model: modelPathTextBox.Text),
-                    ImageResize = ImageResize.Stretched,
-                    SamplingOptions = new(SKFilterMode.Nearest, SKMipmapMode.None)
-                });
-
-                AddLog($"模型加載成功: {_yolo.ModelInfo}");
-                statusLabel.Text = "模型加載成功";
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"模型初始化失敗: {ex.Message}", "錯誤", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                AddLog($"模型初始化失敗: {ex.Message}");
-                return;
+                    return; // 模型加載失敗
+                }
             }
 
             // 重置統計信息
@@ -1230,7 +1443,7 @@ private async Task MonitorWorkerLoopAsync(CancellationToken ct)
                     {
                         currentMaterialLabel.Text = $"當前料號: {materialDirName}";
                         AddLog($"檢測到新料號目錄: {materialDirName}");
-                    }, ct);
+                    });
 
                     // 獲取所有工站目錄
                     var stationDirs = Directory.GetDirectories(materialDirPath)
@@ -1322,7 +1535,7 @@ private async Task MonitorWorkerLoopAsync(CancellationToken ct)
 
                             // 運行檢測
                             await _inferenceGate.WaitAsync(ct);
-                            List<SegmentationBoundingBox> results;
+                            List<YoloDotNet.Models.Segmentation> results;
                             try
                             {
                                 results = _yolo!.RunSegmentation(image, confidence: confidence, pixelConfedence: pixelConfidence, iou: iou);
@@ -1381,7 +1594,7 @@ private async Task MonitorWorkerLoopAsync(CancellationToken ct)
 
                             if (shouldGenerateJson)
                             {
-                                SaveJsonFile(outputPath, "監控模式", confidence, pixelConfidence, iou, results);
+                                SaveJsonFile(outputPath, "MonitorMode", confidence, pixelConfidence, iou, results);
                             }
 
                             Interlocked.Increment(ref _totalCount);
@@ -1848,28 +2061,15 @@ private async Task MonitorWorkerLoopAsync(CancellationToken ct)
                 Directory.CreateDirectory(_outputFolder);
             }
 
-            // 初始化 Yolo
-            try
+            // 初始化 Yolo（如果尚未加載或模型路徑已改變）
+            if (_yolo == null || _currentModelPath == null || 
+                !_currentModelPath.Equals(modelPathTextBox.Text, StringComparison.OrdinalIgnoreCase))
             {
-                AddLog("正在初始化模型...");
-                statusLabel.Text = "正在初始化模型...";
-
-                _yolo?.Dispose();
-                _yolo = new Yolo(new YoloOptions
+                await LoadModelAsync();
+                if (_yolo == null)
                 {
-                    ExecutionProvider = new CpuExecutionProvider(model: modelPathTextBox.Text),
-                    ImageResize = ImageResize.Stretched,
-                    SamplingOptions = new(SKFilterMode.Nearest, SKMipmapMode.None)
-                });
-
-                AddLog($"模型加載成功: {_yolo.ModelInfo}");
-                statusLabel.Text = "模型加載成功";
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"模型初始化失敗: {ex.Message}", "錯誤", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                AddLog($"模型初始化失敗: {ex.Message}");
-                return;
+                    return; // 模型加載失敗
+                }
             }
 
             // 重置統計信息和圖片列表
@@ -1948,28 +2148,15 @@ private async Task MonitorWorkerLoopAsync(CancellationToken ct)
                 Directory.CreateDirectory(_outputFolder);
             }
 
-            // 初始化 Yolo
-            try
+            // 初始化 Yolo（如果尚未加載或模型路徑已改變）
+            if (_yolo == null || _currentModelPath == null || 
+                !_currentModelPath.Equals(modelPathTextBox.Text, StringComparison.OrdinalIgnoreCase))
             {
-                AddLog("正在初始化模型...");
-                statusLabel.Text = "正在初始化模型...";
-
-                _yolo?.Dispose();
-                _yolo = new Yolo(new YoloOptions
+                await LoadModelAsync();
+                if (_yolo == null)
                 {
-                    ExecutionProvider = new CpuExecutionProvider(model: modelPathTextBox.Text),
-                    ImageResize = ImageResize.Stretched,
-                    SamplingOptions = new(SKFilterMode.Nearest, SKMipmapMode.None)
-                });
-
-                AddLog($"模型加載成功: {_yolo.ModelInfo}");
-                statusLabel.Text = "模型加載成功";
-            }
-            catch (Exception ex)
-            {
-                MessageBox.Show($"模型初始化失敗: {ex.Message}", "錯誤", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                AddLog($"模型初始化失敗: {ex.Message}");
-                return;
+                    return; // 模型加載失敗
+                }
             }
 
             // 重置統計信息和圖片列表
@@ -2038,7 +2225,7 @@ private async Task MonitorWorkerLoopAsync(CancellationToken ct)
                 var stopwatch = System.Diagnostics.Stopwatch.StartNew();
                 try
                 {
-                    ct.ThrowIfCancellationRequested();
+                    cancellationToken.ThrowIfCancellationRequested();
 
                     var fileName = Path.GetFileName(imagePath);
                     InvokeUI(() =>
@@ -2049,10 +2236,10 @@ private async Task MonitorWorkerLoopAsync(CancellationToken ct)
                     });
 
                     // 等待檔案寫入完成，避免讀到半檔
-                    await WaitFileReadyAsync(imagePath, ct);
+                    await WaitFileReadyAsync(imagePath, cancellationToken);
 
                     // 加載圖片
-                    await WaitFileReadyAsync(imagePath, ct);
+                    await WaitFileReadyAsync(imagePath, cancellationToken);
                     using var image = SKBitmap.Decode(imagePath);
                     if (image == null)
                     {
@@ -2060,8 +2247,8 @@ private async Task MonitorWorkerLoopAsync(CancellationToken ct)
                     }
 
                     // 運行檢測
-                    await _inferenceGate.WaitAsync(ct);
-                    List<SegmentationBoundingBox> results;
+                    await _inferenceGate.WaitAsync(cancellationToken);
+                    List<YoloDotNet.Models.Segmentation> results;
                     try
                     {
                         results = _yolo!.RunSegmentation(image, confidence: confidence, pixelConfedence: pixelConfidence, iou: iou);
@@ -2116,7 +2303,7 @@ private async Task MonitorWorkerLoopAsync(CancellationToken ct)
 
                     if (shouldGenerateJson)
                     {
-                        SaveJsonFile(outputPath, "手動模式-單文件", confidence, pixelConfidence, iou, results);
+                        SaveJsonFile(outputPath, "ManualMode-SingleFile", confidence, pixelConfidence, iou, results);
                     }
 
                     // 轉換為 Bitmap 並更新顯示
@@ -2188,7 +2375,7 @@ private async Task MonitorWorkerLoopAsync(CancellationToken ct)
             {
                 foreach (var imagePath in imageFiles)
                 {
-                    ct.ThrowIfCancellationRequested();
+                    cancellationToken.ThrowIfCancellationRequested();
 
                     var stopwatch = System.Diagnostics.Stopwatch.StartNew();
                     try
@@ -2202,7 +2389,7 @@ private async Task MonitorWorkerLoopAsync(CancellationToken ct)
                         });
 
                         // 加載圖片
-                        await WaitFileReadyAsync(imagePath, ct);
+                        await WaitFileReadyAsync(imagePath, cancellationToken);
                     using var image = SKBitmap.Decode(imagePath);
                         if (image == null)
                         {
@@ -2214,8 +2401,8 @@ private async Task MonitorWorkerLoopAsync(CancellationToken ct)
                         }
 
                         // 運行檢測
-                        await _inferenceGate.WaitAsync(ct);
-                        List<SegmentationBoundingBox> results;
+                        await _inferenceGate.WaitAsync(cancellationToken);
+                        List<YoloDotNet.Models.Segmentation> results;
                         try
                         {
                             results = _yolo!.RunSegmentation(image, confidence: confidence, pixelConfedence: pixelConfidence, iou: iou);
@@ -2270,7 +2457,7 @@ private async Task MonitorWorkerLoopAsync(CancellationToken ct)
 
                         if (shouldGenerateJson)
                         {
-                            SaveJsonFile(outputPath, "手動模式-批量處理", confidence, pixelConfidence, iou, results);
+                            SaveJsonFile(outputPath, "ManualMode-Batch", confidence, pixelConfidence, iou, results);
                         }
 
                         processedCount++;
@@ -2471,6 +2658,9 @@ private async Task MonitorWorkerLoopAsync(CancellationToken ct)
             // 釋放所有 Bitmap
             ClearResultBitmaps();
 
+            // 斷開相機
+            DisconnectCamera();
+
             base.OnFormClosing(e);
         }
     
@@ -2532,6 +2722,549 @@ private void InitSplitContainersSafe()
             if (desired > maxDistance) desired = maxDistance;
 
             sc.SplitterDistance = desired;
+        }
+
+        // ========== 相機功能 ==========
+
+        private void CheckForCameras()
+        {
+            try
+            {
+                _videoDevices = new FilterInfoCollection(FilterCategory.VideoInputDevice);
+                
+                if (_videoDevices.Count == 0)
+                {
+                    InvokeUI(() =>
+                    {
+                        lblCameraStatus.Text = "相機狀態: 未偵測到相機";
+                        lblCameraStatus.ForeColor = Color.Red;
+                        AddLog("未偵測到相機設備");
+                    });
+                    MessageBox.Show("未偵測到相機設備！", "警告", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return;
+                }
+
+                InvokeUI(() =>
+                {
+                    cmbCameras.Items.Clear();
+                    foreach (FilterInfo device in _videoDevices)
+                    {
+                        cmbCameras.Items.Add(device.Name);
+                    }
+                    if (cmbCameras.Items.Count > 0)
+                    {
+                        cmbCameras.SelectedIndex = 0;
+                    }
+                    lblCameraStatus.Text = $"相機狀態: 偵測到 {_videoDevices.Count} 個相機";
+                    lblCameraStatus.ForeColor = Color.Gray;
+                    AddLog($"偵測到 {_videoDevices.Count} 個相機設備");
+                });
+            }
+            catch (Exception ex)
+            {
+                InvokeUI(() =>
+                {
+                    AddLog($"檢查相機時發生錯誤: {ex.Message}");
+                    lblCameraStatus.Text = "相機狀態: 檢查失敗";
+                    lblCameraStatus.ForeColor = Color.Red;
+                });
+            }
+        }
+
+        private void BtnConnectCamera_Click(object? sender, EventArgs e)
+        {
+            try
+            {
+                if (_videoSource != null && _videoSource.IsRunning)
+                {
+                    // 斷開連接
+                    DisconnectCamera();
+                }
+                else
+                {
+                    // 連接相機
+                    if (_videoDevices == null || _videoDevices.Count == 0)
+                    {
+                        MessageBox.Show("沒有可用的相機設備！", "錯誤", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        return;
+                    }
+
+                    if (cmbCameras.SelectedIndex < 0)
+                    {
+                        MessageBox.Show("請選擇一個相機！", "錯誤", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                        return;
+                    }
+
+                    _videoSource = new VideoCaptureDevice(_videoDevices[cmbCameras.SelectedIndex].MonikerString);
+                    _videoSource.NewFrame += VideoSource_NewFrame;
+                    _videoSource.Start();
+                    
+                    InvokeUI(() =>
+                    {
+                        btnConnectCamera.Text = "斷開相機";
+                        btnCaptureCamera.Enabled = true;
+                        btnBurstCapture.Enabled = true;
+                        lblCameraStatus.Text = "相機狀態: 已連接";
+                        lblCameraStatus.ForeColor = Color.Green;
+                        AddLog("相機已連接");
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                InvokeUI(() =>
+                {
+                    AddLog($"連接相機時發生錯誤: {ex.Message}");
+                    lblCameraStatus.Text = "相機狀態: 連接失敗";
+                    lblCameraStatus.ForeColor = Color.Red;
+                });
+                MessageBox.Show($"連接相機時發生錯誤: {ex.Message}", "錯誤", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+
+        private void DisconnectCamera()
+        {
+            try
+            {
+                if (_videoSource != null && _videoSource.IsRunning)
+                {
+                    _videoSource.SignalToStop();
+                    _videoSource.WaitForStop();
+                    _videoSource.NewFrame -= VideoSource_NewFrame;
+                    _videoSource = null;
+                }
+
+                lock (_cameraFrameLock)
+                {
+                    _currentCameraFrame?.Dispose();
+                    _currentCameraFrame = null;
+                }
+
+                InvokeUI(() =>
+                {
+                    btnConnectCamera.Text = "連接相機";
+                    btnCaptureCamera.Enabled = false;
+                    btnBurstCapture.Enabled = false;
+                    lblCameraStatus.Text = "相機狀態: 未連接";
+                    lblCameraStatus.ForeColor = Color.Gray;
+                    resultPictureBox.Image = null;
+                    noImageLabel.Visible = true;
+                    AddLog("相機已斷開");
+                });
+            }
+            catch (Exception ex)
+            {
+                InvokeUI(() =>
+                {
+                    AddLog($"斷開相機時發生錯誤: {ex.Message}");
+                });
+            }
+        }
+
+        private void VideoSource_NewFrame(object sender, NewFrameEventArgs eventArgs)
+        {
+            try
+            {
+                // 異步更新當前畫面快照
+                _ = Task.Run(() =>
+                {
+                    Bitmap? clonedFrame = null;
+                    try
+                    {
+                        clonedFrame = (Bitmap)eventArgs.Frame.Clone();
+                    }
+                    catch
+                    {
+                        clonedFrame?.Dispose();
+                        return;
+                    }
+
+                    // 更新快照
+                    lock (_cameraFrameLock)
+                    {
+                        _currentCameraFrame?.Dispose();
+                        _currentCameraFrame = clonedFrame;
+                    }
+                });
+
+                // 更新預覽畫面（使用現有的 resultPictureBox）
+                InvokeUI(() =>
+                {
+                    try
+                    {
+                        Bitmap? previewFrame = null;
+                        lock (_cameraFrameLock)
+                        {
+                            if (_currentCameraFrame != null)
+                            {
+                                previewFrame = (Bitmap)_currentCameraFrame.Clone();
+                            }
+                        }
+
+                        if (previewFrame == null)
+                        {
+                            previewFrame = (Bitmap)eventArgs.Frame.Clone();
+                        }
+
+                        if (previewFrame != null)
+                        {
+                            var oldImage = resultPictureBox.Image;
+                            resultPictureBox.Image = previewFrame;
+                            oldImage?.Dispose();
+                            noImageLabel.Visible = false;
+                        }
+                    }
+                    catch
+                    {
+                        // 忽略錯誤，避免影響預覽
+                    }
+                });
+            }
+            catch (Exception ex)
+            {
+                InvokeUI(() =>
+                {
+                    AddLog($"顯示相機畫面時發生錯誤: {ex.Message}");
+                });
+            }
+        }
+
+        private async void BtnCaptureCamera_Click(object? sender, EventArgs e)
+        {
+            if (_videoSource == null || !_videoSource.IsRunning)
+            {
+                MessageBox.Show("請先連接相機！", "提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            if (_yolo == null)
+            {
+                MessageBox.Show("請先初始化模型！", "提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            if (_isCapturing) return;
+
+            btnCaptureCamera.Enabled = false;
+            _isCapturing = true;
+            double delaySeconds = (double)numCaptureDelay.Value;
+
+            if (delaySeconds > 0)
+            {
+                InvokeUI(() =>
+                {
+                    AddLog($"將在 {delaySeconds} 秒後拍照...");
+                });
+
+                // 倒數計時
+                while (delaySeconds > 0 && _isCapturing)
+                {
+                    await Task.Delay(100);
+                    delaySeconds -= 0.1;
+                }
+            }
+
+            if (!_isCapturing)
+            {
+                btnCaptureCamera.Enabled = true;
+                return;
+            }
+
+            try
+            {
+                Bitmap? frameToProcess = null;
+
+                // 從當前畫面快照獲取最新畫面
+                lock (_cameraFrameLock)
+                {
+                    if (_currentCameraFrame != null)
+                    {
+                        frameToProcess = (Bitmap)_currentCameraFrame.Clone();
+                    }
+                }
+
+                if (frameToProcess == null && resultPictureBox.Image != null)
+                {
+                    frameToProcess = (Bitmap)resultPictureBox.Image.Clone();
+                }
+
+                if (frameToProcess != null)
+                {
+                    // 轉換為 SKBitmap 進行處理
+                    using var skBitmap = BitmapToSKBitmap(frameToProcess);
+                    if (skBitmap != null)
+                    {
+                        await ProcessCameraImage(skBitmap, "CameraCapture");
+                    }
+                    frameToProcess.Dispose();
+                }
+                else
+                {
+                    InvokeUI(() =>
+                    {
+                        AddLog("無法拍照：沒有畫面");
+                        MessageBox.Show("無法拍照：沒有畫面", "錯誤", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    });
+                }
+            }
+            catch (Exception ex)
+            {
+                InvokeUI(() =>
+                {
+                    AddLog($"拍照時發生錯誤: {ex.Message}");
+                    MessageBox.Show($"拍照時發生錯誤: {ex.Message}", "錯誤", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                });
+            }
+            finally
+            {
+                _isCapturing = false;
+                btnCaptureCamera.Enabled = true;
+            }
+        }
+
+        private async void BtnBurstCapture_Click(object? sender, EventArgs e)
+        {
+            if (_videoSource == null || !_videoSource.IsRunning)
+            {
+                MessageBox.Show("請先連接相機！", "提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            if (_yolo == null)
+            {
+                MessageBox.Show("請先初始化模型！", "提示", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
+
+            if (_isCapturing) return;
+
+            btnBurstCapture.Enabled = false;
+            _isCapturing = true;
+            int burstCount = (int)numBurstCount.Value;
+
+            try
+            {
+                InvokeUI(() =>
+                {
+                    AddLog($"⚡ 開始連拍模式：1 秒內拍攝 {burstCount} 張照片並進行檢測...");
+                });
+
+                DateTime burstStartTime = DateTime.Now;
+                double totalDuration = 1000.0; // 總共 1 秒
+                double interval = totalDuration / burstCount; // 每張照片的間隔時間（毫秒）
+
+                var processTaskList = new List<Task>();
+
+                for (int i = 0; i < burstCount && _isCapturing; i++)
+                {
+                    Bitmap? currentFrameToProcess = null;
+
+                    // 每次拍照都獲取最新的畫面
+                    lock (_cameraFrameLock)
+                    {
+                        if (_currentCameraFrame != null)
+                        {
+                            currentFrameToProcess = (Bitmap)_currentCameraFrame.Clone();
+                        }
+                    }
+
+                    if (currentFrameToProcess == null && resultPictureBox.Image != null)
+                    {
+                        currentFrameToProcess = (Bitmap)resultPictureBox.Image.Clone();
+                    }
+
+                    if (currentFrameToProcess != null)
+                    {
+                        var frame = currentFrameToProcess; // 捕獲變數
+                        var frameIndex = i + 1;
+
+                        // 創建異步處理任務（不阻塞拍攝循環）
+                        var processTask = Task.Run(async () =>
+                        {
+                            try
+                            {
+                                using var skBitmap = BitmapToSKBitmap(frame);
+                                if (skBitmap != null)
+                                {
+                                    await ProcessCameraImage(skBitmap, $"CameraBurst_{frameIndex}of{burstCount}");
+                                }
+                            }
+                            finally
+                            {
+                                frame.Dispose();
+                            }
+                        });
+
+                        processTaskList.Add(processTask);
+
+                        // 更新進度顯示
+                        InvokeUI(() =>
+                        {
+                            double elapsed = (DateTime.Now - burstStartTime).TotalMilliseconds;
+                            double remaining = Math.Max(0, totalDuration - elapsed);
+                            AddLog($"連拍進度：{frameIndex}/{burstCount} (剩餘 {remaining:F0}ms)");
+                        });
+                    }
+
+                    // 計算下一張照片應該拍攝的時間點
+                    double elapsedTime = (DateTime.Now - burstStartTime).TotalMilliseconds;
+                    double nextShotTime = (i + 1) * interval;
+                    double waitTime = Math.Max(0, nextShotTime - elapsedTime);
+
+                    // 如果不是最後一張，等待到正確的時間點
+                    if (i < burstCount - 1 && waitTime > 0)
+                    {
+                        await Task.Delay((int)waitTime);
+                    }
+                }
+
+                // 等待所有處理任務完成
+                if (processTaskList.Count > 0)
+                {
+                    await Task.WhenAll(processTaskList);
+                }
+
+                InvokeUI(() =>
+                {
+                    AddLog($"✅ 連拍完成：成功處理 {processTaskList.Count}/{burstCount} 張照片");
+                });
+            }
+            catch (Exception ex)
+            {
+                InvokeUI(() =>
+                {
+                    AddLog($"連拍時發生錯誤: {ex.Message}");
+                    MessageBox.Show($"連拍時發生錯誤: {ex.Message}", "錯誤", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                });
+            }
+            finally
+            {
+                _isCapturing = false;
+                btnBurstCapture.Enabled = true;
+            }
+        }
+
+        private async Task ProcessCameraImage(SKBitmap skBitmap, string sourceName)
+        {
+            try
+            {
+                // 獲取參數
+                double confidence = 0.24;
+                double pixelConfidence = 0.5;
+                double iou = 0.7;
+                InvokeUI(() =>
+                {
+                    confidence = confidenceTrackBar.Value / 100.0;
+                    pixelConfidence = pixelConfidenceTrackBar.Value / 100.0;
+                    iou = iouTrackBar.Value / 100.0;
+                });
+
+                var stopwatch = System.Diagnostics.Stopwatch.StartNew();
+
+                // 運行檢測
+                await _inferenceGate.WaitAsync();
+                List<YoloDotNet.Models.Segmentation> results;
+                try
+                {
+                    results = _yolo!.RunSegmentation(skBitmap, confidence: confidence, 
+                                                     pixelConfedence: pixelConfidence, iou: iou);
+                }
+                finally
+                {
+                    _inferenceGate.Release();
+                }
+
+                stopwatch.Stop();
+                var processingTime = stopwatch.ElapsedMilliseconds;
+
+                // 確定結果
+                string suffix;
+                bool isNg = results.Count > 0;
+                if (isNg)
+                {
+                    Interlocked.Increment(ref _ngCount);
+                    suffix = "NG";
+                    InvokeUI(() =>
+                    {
+                        AddLog($"  -> {sourceName}: 檢測到 {results.Count} 個目標，標記為 NG");
+                    });
+                }
+                else
+                {
+                    Interlocked.Increment(ref _okCount);
+                    suffix = "OK";
+                    InvokeUI(() =>
+                    {
+                        AddLog($"  -> {sourceName}: 未檢測到目標，標記為 OK");
+                    });
+                }
+
+                // 繪製結果
+                skBitmap.Draw(results, _drawingOptions);
+
+                // 保存結果
+                var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss_fff");
+                var fileName = $"camera_{sourceName}_{timestamp}_{suffix}.jpg";
+                var outputPath = Path.Combine(_outputFolder, fileName);
+                
+                // 確保輸出目錄存在
+                if (!Directory.Exists(_outputFolder))
+                {
+                    Directory.CreateDirectory(_outputFolder);
+                }
+
+                var encodedFormat = SKEncodedImageFormat.Jpeg;
+                skBitmap.Save(outputPath, encodedFormat, 80);
+
+                // 保存 JSON 檔案（如果啟用）
+                bool shouldGenerateJson = false;
+                InvokeUI(() =>
+                {
+                    shouldGenerateJson = generateJsonRadio.Checked;
+                });
+
+                if (shouldGenerateJson)
+                {
+                    SaveJsonFile(outputPath, sourceName, confidence, pixelConfidence, iou, results);
+                }
+
+                Interlocked.Increment(ref _totalCount);
+
+                // 轉換為 Bitmap 並更新顯示
+                var bitmap = SKBitmapToBitmap(skBitmap);
+                InvokeUI(() =>
+                {
+                    _resultBitmaps.Add(bitmap);
+                    _resultImagePaths.Add(outputPath);
+                    _currentImageIndex = _resultBitmaps.Count - 1;
+                    ShowImageAtIndex(_currentImageIndex);
+                    processingSpeedLabel.Text = $"處理速度: {processingTime} ms";
+                    AddLog($"  -> 已保存到: {outputPath}");
+                    UpdateStatistics();
+                });
+            }
+            catch (Exception ex)
+            {
+                InvokeUI(() =>
+                {
+                    AddLog($"處理相機圖片時發生錯誤: {ex.Message}");
+                });
+            }
+        }
+
+        private SKBitmap? BitmapToSKBitmap(Bitmap bitmap)
+        {
+            try
+            {
+                using var stream = new MemoryStream();
+                bitmap.Save(stream, ImageFormat.Png);
+                stream.Position = 0;
+                return SKBitmap.Decode(stream);
+            }
+            catch
+            {
+                return null;
+            }
         }
 
     } }

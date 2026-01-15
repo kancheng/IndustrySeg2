@@ -11,6 +11,8 @@
 
   <ItemGroup>
     <PackageReference Include="SkiaSharp" Version="3.119.1" />
+    <PackageReference Include="AForge.Video" Version="2.2.5" />
+    <PackageReference Include="AForge.Video.DirectShow" Version="2.2.5" />
   </ItemGroup>
 
   <ItemGroup>

@@ -1,3 +1,7 @@
+using System.Linq;
+using System.Windows.Forms;
+using System.Drawing;
+
 namespace IndustrySegSys
 {
     partial class MainForm
@@ -17,6 +21,7 @@ namespace IndustrySegSys
         private Button browseOutputButton;
         private RadioButton monitorModeRadio;
         private RadioButton manualModeRadio;
+        private RadioButton cameraModeRadio;
         private Panel manualImagePanel;
         private TextBox singleFileTextBox;
         private Button browseSingleFileButton;
@@ -40,6 +45,17 @@ namespace IndustrySegSys
         private Button processBatchButton;
         private Button openOutputFolderButton;
         private FlowLayoutPanel buttonPanel;
+        
+        // 相機模式控件
+        private Panel cameraModePanel;
+        private ComboBox cmbCameras;
+        private Button btnConnectCamera;
+        private Button btnCaptureCamera;
+        private Button btnBurstCapture;
+        private NumericUpDown numBurstCount;
+        private NumericUpDown numCaptureDelay;
+        private PictureBox cameraPreviewBox;
+        private Label lblCameraStatus;
 
         // 主內容區域
         private TableLayoutPanel mainContentPanel;
@@ -97,14 +113,47 @@ namespace IndustrySegSys
         ///  Required method for Designer support - do not modify
         ///  the contents of this method with the code editor.
         /// </summary>
+        // 現代化設計常量
+        private static class ModernUI
+        {
+            // 顏色主題
+            public static readonly Color BackgroundPrimary = Color.FromArgb(245, 247, 250);
+            public static readonly Color BackgroundSecondary = Color.White;
+            public static readonly Color BackgroundCard = Color.White;
+            public static readonly Color BorderColor = Color.FromArgb(230, 234, 240);
+            public static readonly Color TextPrimary = Color.FromArgb(30, 41, 59);
+            public static readonly Color TextSecondary = Color.FromArgb(100, 116, 139);
+            public static readonly Color AccentPrimary = Color.FromArgb(59, 130, 246); // Blue
+            public static readonly Color AccentSuccess = Color.FromArgb(34, 197, 94); // Green
+            public static readonly Color AccentDanger = Color.FromArgb(239, 68, 68); // Red
+            public static readonly Color AccentWarning = Color.FromArgb(251, 191, 36); // Yellow
+            
+            // 按鈕樣式
+            public static readonly Color ButtonPrimary = AccentPrimary;
+            public static readonly Color ButtonPrimaryHover = Color.FromArgb(37, 99, 235);
+            public static readonly Color ButtonSuccess = AccentSuccess;
+            public static readonly Color ButtonDanger = AccentDanger;
+            public static readonly Color ButtonSecondary = Color.FromArgb(241, 245, 249);
+            public static readonly Color ButtonSecondaryHover = Color.FromArgb(226, 232, 240);
+            
+            // 間距
+            public const int PaddingSmall = 8;
+            public const int PaddingMedium = 12;
+            public const int PaddingLarge = 16;
+            public const int PaddingXLarge = 24;
+            public const int BorderRadius = 8;
+            public const int CardElevation = 2;
+        }
+
         private void InitializeComponent()
         {
             this.components = new System.ComponentModel.Container();
             this.AutoScaleMode = System.Windows.Forms.AutoScaleMode.Font;
-            this.ClientSize = new System.Drawing.Size(1400, 900);
-            this.Text = "工業檢測系統 - 自動監控模式";
-            this.BackColor = System.Drawing.Color.FromArgb(240, 240, 240);
-            this.MinimumSize = new System.Drawing.Size(1200, 700);
+            this.ClientSize = new System.Drawing.Size(1600, 1000);
+            this.Text = "工業檢測系統";
+            this.BackColor = ModernUI.BackgroundPrimary;
+            this.MinimumSize = new System.Drawing.Size(1280, 720);
+            this.Font = new Font("Segoe UI", 9F, FontStyle.Regular);
 
             // 創建控件
             CreateConfigPanel();
@@ -114,124 +163,205 @@ namespace IndustrySegSys
 
             // 設置布局
             SetupLayout();
+            
+            // 添加響應式布局處理
+            this.Resize += MainForm_Resize;
+        }
+        
+        private void MainForm_Resize(object sender, EventArgs e)
+        {
+            // 響應式布局調整
+            AdjustResponsiveLayout();
+        }
+        
+        private void AdjustResponsiveLayout()
+        {
+            // 根據窗口大小調整布局
+            int width = this.ClientSize.Width;
+            
+            // 小屏幕：單列布局
+            if (width < 1400)
+            {
+                if (configGroupBox != null)
+                {
+                    // 調整配置面板為單列
+                    var table = configGroupBox.Controls.OfType<TableLayoutPanel>().FirstOrDefault();
+                    if (table != null && table.ColumnCount > 1)
+                    {
+                        // 可以動態調整列寬
+                    }
+                }
+            }
+        }
+
+        // 創建現代化按鈕樣式
+        private Button CreateModernButton(string text, Color? backColor = null, Color? foreColor = null, int width = 120, int height = 36)
+        {
+            var btn = new Button
+            {
+                Text = text,
+                Width = width,
+                Height = height,
+                FlatStyle = FlatStyle.Flat,
+                BackColor = backColor ?? ModernUI.ButtonPrimary,
+                ForeColor = foreColor ?? Color.White,
+                Font = new Font("Segoe UI", 9F, FontStyle.Regular),
+                Cursor = Cursors.Hand
+            };
+            btn.FlatAppearance.BorderSize = 0;
+            btn.FlatAppearance.MouseOverBackColor = backColor == ModernUI.ButtonPrimary ? ModernUI.ButtonPrimaryHover : ModernUI.ButtonSecondaryHover;
+            return btn;
+        }
+        
+        // 創建現代化文本框
+        private TextBox CreateModernTextBox()
+        {
+            return new TextBox
+            {
+                ReadOnly = true,
+                BorderStyle = BorderStyle.FixedSingle,
+                BackColor = ModernUI.BackgroundSecondary,
+                ForeColor = ModernUI.TextPrimary,
+                Font = new Font("Segoe UI", 9F),
+                MinimumSize = new Size(200, 28),
+                Anchor = AnchorStyles.Left | AnchorStyles.Right,
+                Padding = new Padding(8, 4, 8, 4)
+            };
+        }
+        
+        // 創建現代化標籤
+        private Label CreateModernLabel(string text, int? width = null)
+        {
+            var label = new Label
+            {
+                Text = text,
+                AutoSize = width == null,
+                Width = width ?? 0,
+                ForeColor = ModernUI.TextPrimary,
+                Font = new Font("Segoe UI", 9F, FontStyle.Regular),
+                TextAlign = ContentAlignment.MiddleLeft,
+                Padding = new Padding(0, 4, 0, 0)
+            };
+            return label;
         }
 
         private void CreateConfigPanel()
         {
-            // 統一的尺寸常量
-            const int LABEL_WIDTH = 110;           // 標籤寬度
-            const int BUTTON_WIDTH = 80;           // 按鈕寬度
-            const int TEXTBOX_MIN_WIDTH = 200;     // TextBox 最小寬度
-            const int TRACKBAR_WIDTH = 150;        // TrackBar 寬度
-            const int VALUE_LABEL_WIDTH = 50;      // 數值標籤寬度
-            const int ROW_MARGIN_TOP = 8;          // 行間距
-            const int PARAM_SPACING = 25;          // 參數間距
-
+            // 創建卡片式配置面板
             configGroupBox = new GroupBox
             {
-                Text = "配置",
+                Text = "⚙️ 系統配置",
                 Dock = DockStyle.Top,
-                Padding = new Padding(12),
+                Padding = new Padding(ModernUI.PaddingLarge),
                 AutoSize = true,
-                AutoSizeMode = AutoSizeMode.GrowAndShrink
+                AutoSizeMode = AutoSizeMode.GrowAndShrink,
+                BackColor = ModernUI.BackgroundCard,
+                ForeColor = ModernUI.TextPrimary,
+                Font = new Font("Segoe UI", 10F, FontStyle.Bold),
+                Margin = new Padding(ModernUI.PaddingMedium)
             };
 
             var configTable = new TableLayoutPanel
             {
-                Dock = DockStyle.Top,
+                Dock = DockStyle.Fill,
                 ColumnCount = 2,
-                RowCount = 4,
-                AutoSize = true
+                RowCount = 5,
+                AutoSize = true,
+                Padding = new Padding(0)
             };
             configTable.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
             configTable.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
-            configTable.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            configTable.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            configTable.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-            configTable.RowStyles.Add(new RowStyle(SizeType.AutoSize));
-
-            // 創建統一的標籤樣式
-            Label CreateLabel(string text) => new Label 
-            { 
-                Text = text, 
-                Width = LABEL_WIDTH, 
-                AutoSize = false, 
-                TextAlign = ContentAlignment.MiddleLeft,
-                Padding = new Padding(0, 2, 0, 0)  // 微調垂直對齊
-            };
-
-            // 創建統一的 TextBox 樣式
-            TextBox CreateTextBox() => new TextBox 
-            { 
-                ReadOnly = true, 
-                MinimumSize = new Size(TEXTBOX_MIN_WIDTH, 0),
-                Anchor = AnchorStyles.Left | AnchorStyles.Right
-            };
-
-            // 創建統一的按鈕樣式
-            Button CreateBrowseButton() => new Button 
-            { 
-                Text = "瀏覽...", 
-                Width = BUTTON_WIDTH,
-                Height = 23,  // 統一按鈕高度
-                Anchor = AnchorStyles.Left
-            };
+            for (int i = 0; i < 5; i++)
+            {
+                configTable.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            }
 
             // 創建統一的 FlowLayoutPanel 樣式
-            FlowLayoutPanel CreateFlowPanel() => new FlowLayoutPanel 
+            FlowLayoutPanel CreateFlowPanel(int marginTop = ModernUI.PaddingSmall) => new FlowLayoutPanel 
             { 
                 Dock = DockStyle.Fill, 
                 FlowDirection = FlowDirection.LeftToRight, 
-                Margin = new Padding(0, ROW_MARGIN_TOP, 0, 0),
+                Margin = new Padding(ModernUI.PaddingMedium, marginTop, ModernUI.PaddingMedium, 0),
                 WrapContents = false,
                 AutoSize = true
             };
 
             // 第一行：模型文件和監控目錄
-            modelPathTextBox = CreateTextBox();
-            browseModelButton = CreateBrowseButton();
+            modelPathTextBox = CreateModernTextBox();
+            browseModelButton = CreateModernButton("瀏覽", ModernUI.ButtonSecondary, ModernUI.TextPrimary, 80, 28);
             browseModelButton.Click += BrowseModelButton_Click;
 
             var modelPanel = CreateFlowPanel();
-            modelPanel.Controls.Add(CreateLabel("模型文件:"));
+            modelPanel.Controls.Add(CreateModernLabel("模型文件:", 100));
             modelPanel.Controls.Add(modelPathTextBox);
             modelPanel.Controls.Add(browseModelButton);
             configTable.Controls.Add(modelPanel, 0, 0);
 
-            watchPathTextBox = CreateTextBox();
-            browseWatchPathButton = CreateBrowseButton();
+            watchPathTextBox = CreateModernTextBox();
+            browseWatchPathButton = CreateModernButton("瀏覽", ModernUI.ButtonSecondary, ModernUI.TextPrimary, 80, 28);
             browseWatchPathButton.Click += BrowseWatchPathButton_Click;
 
             var watchPanel = CreateFlowPanel();
-            watchPanel.Controls.Add(CreateLabel("監控目錄:"));
+            watchPanel.Controls.Add(CreateModernLabel("監控目錄:", 100));
             watchPanel.Controls.Add(watchPathTextBox);
             watchPanel.Controls.Add(browseWatchPathButton);
             configTable.Controls.Add(watchPanel, 1, 0);
 
             // 第二行：輸出目錄和工作模式
-            outputPathTextBox = CreateTextBox();
-            browseOutputButton = CreateBrowseButton();
+            outputPathTextBox = CreateModernTextBox();
+            browseOutputButton = CreateModernButton("瀏覽", ModernUI.ButtonSecondary, ModernUI.TextPrimary, 80, 28);
             browseOutputButton.Click += BrowseOutputButton_Click;
 
             var outputPanel = CreateFlowPanel();
-            outputPanel.Controls.Add(CreateLabel("輸出目錄:"));
+            outputPanel.Controls.Add(CreateModernLabel("輸出目錄:", 100));
             outputPanel.Controls.Add(outputPathTextBox);
             outputPanel.Controls.Add(browseOutputButton);
             configTable.Controls.Add(outputPanel, 0, 1);
 
-            monitorModeRadio = new RadioButton { Text = "自動監控模式", Checked = true, AutoSize = true };
-            manualModeRadio = new RadioButton { Text = "手動處理模式", AutoSize = true };
+            // 工作模式選擇 - 使用現代化樣式
+            monitorModeRadio = new RadioButton 
+            { 
+                Text = "📁 自動監控", 
+                Checked = true, 
+                AutoSize = true,
+                ForeColor = ModernUI.TextPrimary,
+                Font = new Font("Segoe UI", 9F),
+                Padding = new Padding(ModernUI.PaddingSmall, 0, ModernUI.PaddingMedium, 0)
+            };
+            manualModeRadio = new RadioButton 
+            { 
+                Text = "🖱️ 手動處理", 
+                AutoSize = true,
+                ForeColor = ModernUI.TextPrimary,
+                Font = new Font("Segoe UI", 9F),
+                Padding = new Padding(ModernUI.PaddingSmall, 0, ModernUI.PaddingMedium, 0)
+            };
+            cameraModeRadio = new RadioButton 
+            { 
+                Text = "📷 相機模式", 
+                AutoSize = true,
+                ForeColor = ModernUI.TextPrimary,
+                Font = new Font("Segoe UI", 9F),
+                Padding = new Padding(ModernUI.PaddingSmall, 0, 0, 0)
+            };
 
             var modePanel = CreateFlowPanel();
-            modePanel.Controls.Add(CreateLabel("工作模式:"));
+            modePanel.Controls.Add(CreateModernLabel("工作模式:", 100));
             modePanel.Controls.Add(monitorModeRadio);
-            modePanel.Controls.Add(new Label { Width = 15 });  // 間距
             modePanel.Controls.Add(manualModeRadio);
+            modePanel.Controls.Add(cameraModeRadio);
             configTable.Controls.Add(modePanel, 1, 1);
 
             // 第三行：手動模式圖片選擇（初始隱藏）
-            // 手動模式的面板使用 AutoSize + Dock=Top，避免在 GroupBox 固定高度下被裁切
-            manualImagePanel = new Panel { Dock = DockStyle.Top, Visible = false, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, MinimumSize = new Size(0, 90) };
+            manualImagePanel = new Panel 
+            { 
+                Dock = DockStyle.Top, 
+                Visible = false, 
+                AutoSize = true, 
+                AutoSizeMode = AutoSizeMode.GrowAndShrink, 
+                MinimumSize = new Size(0, 100),
+                Padding = new Padding(ModernUI.PaddingMedium)
+            };
             
             var manualImageTable = new TableLayoutPanel 
             { 
@@ -244,25 +374,23 @@ namespace IndustrySegSys
             manualImageTable.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             
             // 單文件路徑
-            singleFileTextBox = CreateTextBox();
-            browseSingleFileButton = CreateBrowseButton();
+            singleFileTextBox = CreateModernTextBox();
+            browseSingleFileButton = CreateModernButton("瀏覽", ModernUI.ButtonSecondary, ModernUI.TextPrimary, 80, 28);
             browseSingleFileButton.Click += BrowseSingleFileButton_Click;
             
-            var singleFilePanel = CreateFlowPanel();
-            singleFilePanel.Margin = new Padding(0, ROW_MARGIN_TOP, 0, 0);
-            singleFilePanel.Controls.Add(CreateLabel("單文件路徑:"));
+            var singleFilePanel = CreateFlowPanel(ModernUI.PaddingSmall);
+            singleFilePanel.Controls.Add(CreateModernLabel("單文件路徑:", 100));
             singleFilePanel.Controls.Add(singleFileTextBox);
             singleFilePanel.Controls.Add(browseSingleFileButton);
             manualImageTable.Controls.Add(singleFilePanel, 0, 0);
             
             // 批量處理路徑
-            batchFileTextBox = CreateTextBox();
-            browseBatchFileButton = CreateBrowseButton();
+            batchFileTextBox = CreateModernTextBox();
+            browseBatchFileButton = CreateModernButton("瀏覽", ModernUI.ButtonSecondary, ModernUI.TextPrimary, 80, 28);
             browseBatchFileButton.Click += BrowseBatchFileButton_Click;
             
-            var batchFilePanel = CreateFlowPanel();
-            batchFilePanel.Margin = new Padding(0, ROW_MARGIN_TOP, 0, 0);
-            batchFilePanel.Controls.Add(CreateLabel("批量處理目錄:"));
+            var batchFilePanel = CreateFlowPanel(ModernUI.PaddingSmall);
+            batchFilePanel.Controls.Add(CreateModernLabel("批量處理目錄:", 100));
             batchFilePanel.Controls.Add(batchFileTextBox);
             batchFilePanel.Controls.Add(browseBatchFileButton);
             manualImageTable.Controls.Add(batchFilePanel, 0, 1);
@@ -271,12 +399,132 @@ namespace IndustrySegSys
             configTable.Controls.Add(manualImagePanel, 0, 2);
             configTable.SetColumnSpan(manualImagePanel, 2);
 
-            // 第四行：參數設置
+            // 第四行（相機模式面板）：相機選擇和控制（初始隱藏）
+            cameraModePanel = new Panel 
+            { 
+                Dock = DockStyle.Top, 
+                Visible = false, 
+                AutoSize = true, 
+                AutoSizeMode = AutoSizeMode.GrowAndShrink, 
+                MinimumSize = new Size(0, 140),
+                Padding = new Padding(ModernUI.PaddingMedium)
+            };
+            
+            var cameraModeTable = new TableLayoutPanel 
+            { 
+                Dock = DockStyle.Fill, 
+                RowCount = 4, 
+                ColumnCount = 2,
+                AutoSize = true
+            };
+            for (int i = 0; i < 4; i++)
+            {
+                cameraModeTable.RowStyles.Add(new RowStyle(SizeType.AutoSize));
+            }
+            cameraModeTable.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
+            cameraModeTable.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
+            
+            // 相機選擇
+            cmbCameras = new ComboBox
+            {
+                DropDownStyle = ComboBoxStyle.DropDownList,
+                MinimumSize = new Size(200, 28),
+                Anchor = AnchorStyles.Left | AnchorStyles.Right,
+                BackColor = ModernUI.BackgroundSecondary,
+                ForeColor = ModernUI.TextPrimary,
+                Font = new Font("Segoe UI", 9F),
+                FlatStyle = FlatStyle.Flat
+            };
+            
+            var cameraSelectPanel = CreateFlowPanel(ModernUI.PaddingSmall);
+            cameraSelectPanel.Controls.Add(CreateModernLabel("選擇相機:", 100));
+            cameraSelectPanel.Controls.Add(cmbCameras);
+            btnConnectCamera = CreateModernButton("連接相機", ModernUI.ButtonPrimary, Color.White, 100, 28);
+            btnConnectCamera.Click += BtnConnectCamera_Click;
+            cameraSelectPanel.Controls.Add(btnConnectCamera);
+            cameraModeTable.Controls.Add(cameraSelectPanel, 0, 0);
+            cameraModeTable.SetColumnSpan(cameraSelectPanel, 2);
+            
+            // 拍照延遲和連拍數量
+            numCaptureDelay = new NumericUpDown
+            {
+                Minimum = 0,
+                Maximum = 60,
+                Value = 0,
+                DecimalPlaces = 1,
+                Increment = 0.5m,
+                Width = 100,
+                Height = 28,
+                Anchor = AnchorStyles.Left,
+                BackColor = ModernUI.BackgroundSecondary,
+                ForeColor = ModernUI.TextPrimary,
+                Font = new Font("Segoe UI", 9F),
+                BorderStyle = BorderStyle.FixedSingle
+            };
+            
+            var delayPanel = CreateFlowPanel(ModernUI.PaddingSmall);
+            delayPanel.Controls.Add(CreateModernLabel("拍照延遲(秒):", 120));
+            delayPanel.Controls.Add(numCaptureDelay);
+            cameraModeTable.Controls.Add(delayPanel, 0, 1);
+            
+            numBurstCount = new NumericUpDown
+            {
+                Minimum = 1,
+                Maximum = 30,
+                Value = 1,
+                DecimalPlaces = 0,
+                Increment = 1,
+                Width = 100,
+                Height = 28,
+                Anchor = AnchorStyles.Left,
+                BackColor = ModernUI.BackgroundSecondary,
+                ForeColor = ModernUI.TextPrimary,
+                Font = new Font("Segoe UI", 9F),
+                BorderStyle = BorderStyle.FixedSingle
+            };
+            
+            var burstPanel = CreateFlowPanel(ModernUI.PaddingSmall);
+            burstPanel.Controls.Add(CreateModernLabel("連拍數量:", 100));
+            burstPanel.Controls.Add(numBurstCount);
+            cameraModeTable.Controls.Add(burstPanel, 1, 1);
+            
+            // 相機控制按鈕
+            btnCaptureCamera = CreateModernButton("📷 拍照檢測", ModernUI.ButtonPrimary, Color.White, 150, 36);
+            btnCaptureCamera.Enabled = false;
+            btnCaptureCamera.Click += BtnCaptureCamera_Click;
+            btnBurstCapture = CreateModernButton("⚡ 連拍檢測", ModernUI.ButtonSuccess, Color.White, 150, 36);
+            btnBurstCapture.Enabled = false;
+            btnBurstCapture.Click += BtnBurstCapture_Click;
+            
+            var cameraButtonPanel = CreateFlowPanel(ModernUI.PaddingSmall);
+            cameraButtonPanel.Controls.Add(btnCaptureCamera);
+            cameraButtonPanel.Controls.Add(new Label { Width = ModernUI.PaddingSmall }); // 間距
+            cameraButtonPanel.Controls.Add(btnBurstCapture);
+            cameraModeTable.Controls.Add(cameraButtonPanel, 0, 2);
+            cameraModeTable.SetColumnSpan(cameraButtonPanel, 2);
+            
+            // 相機狀態標籤
+            lblCameraStatus = new Label
+            {
+                Text = "相機狀態: 未連接",
+                Dock = DockStyle.Top,
+                Margin = new Padding(ModernUI.PaddingMedium, ModernUI.PaddingSmall, ModernUI.PaddingMedium, 0),
+                ForeColor = ModernUI.TextSecondary,
+                Font = new Font("Segoe UI", 9F, FontStyle.Regular)
+            };
+            cameraModeTable.Controls.Add(lblCameraStatus, 0, 3);
+            cameraModeTable.SetColumnSpan(lblCameraStatus, 2);
+            
+            cameraModePanel.Controls.Add(cameraModeTable);
+            configTable.Controls.Add(cameraModePanel, 0, 3);
+            configTable.SetColumnSpan(cameraModePanel, 2);
+
+            // 第五行：參數設置
             var paramPanel = new FlowLayoutPanel 
             { 
                 Dock = DockStyle.Fill, 
                 FlowDirection = FlowDirection.LeftToRight, 
-                Margin = new Padding(0, ROW_MARGIN_TOP + 5, 0, 0),
+                Margin = new Padding(ModernUI.PaddingMedium, ModernUI.PaddingMedium, ModernUI.PaddingMedium, 0),
                 WrapContents = false,
                 AutoSize = true
             };
@@ -286,16 +534,20 @@ namespace IndustrySegSys
                 Minimum = 10, 
                 Maximum = 100, 
                 Value = 24, 
-                Width = TRACKBAR_WIDTH, 
+                Width = 180, 
+                Height = 45,
                 TickFrequency = 10,
-                AutoSize = false
+                AutoSize = false,
+                BackColor = ModernUI.BackgroundCard
             };
             confidenceValueLabel = new Label 
             { 
                 Text = "0.24", 
-                Width = VALUE_LABEL_WIDTH, 
+                Width = 50, 
                 TextAlign = ContentAlignment.MiddleLeft,
-                Padding = new Padding(5, 2, 0, 0)
+                Padding = new Padding(ModernUI.PaddingSmall, 4, 0, 0),
+                ForeColor = ModernUI.TextPrimary,
+                Font = new Font("Segoe UI", 9F, FontStyle.Bold)
             };
 
             pixelConfidenceTrackBar = new TrackBar 
@@ -303,16 +555,20 @@ namespace IndustrySegSys
                 Minimum = 10, 
                 Maximum = 100, 
                 Value = 50, 
-                Width = TRACKBAR_WIDTH, 
+                Width = 180, 
+                Height = 45,
                 TickFrequency = 10,
-                AutoSize = false
+                AutoSize = false,
+                BackColor = ModernUI.BackgroundCard
             };
             pixelConfidenceValueLabel = new Label 
             { 
                 Text = "0.50", 
-                Width = VALUE_LABEL_WIDTH, 
+                Width = 50, 
                 TextAlign = ContentAlignment.MiddleLeft,
-                Padding = new Padding(5, 2, 0, 0)
+                Padding = new Padding(ModernUI.PaddingSmall, 4, 0, 0),
+                ForeColor = ModernUI.TextPrimary,
+                Font = new Font("Segoe UI", 9F, FontStyle.Bold)
             };
 
             iouTrackBar = new TrackBar 
@@ -320,36 +576,40 @@ namespace IndustrySegSys
                 Minimum = 10, 
                 Maximum = 100, 
                 Value = 70, 
-                Width = TRACKBAR_WIDTH, 
+                Width = 180, 
+                Height = 45,
                 TickFrequency = 10,
-                AutoSize = false
+                AutoSize = false,
+                BackColor = ModernUI.BackgroundCard
             };
             iouValueLabel = new Label 
             { 
                 Text = "0.70", 
-                Width = VALUE_LABEL_WIDTH, 
+                Width = 50, 
                 TextAlign = ContentAlignment.MiddleLeft,
-                Padding = new Padding(5, 2, 0, 0)
+                Padding = new Padding(ModernUI.PaddingSmall, 4, 0, 0),
+                ForeColor = ModernUI.TextPrimary,
+                Font = new Font("Segoe UI", 9F, FontStyle.Bold)
             };
 
-            // 參數標籤統一寬度
-            paramPanel.Controls.Add(CreateLabel("Confidence:"));
+            // 參數標籤
+            paramPanel.Controls.Add(CreateModernLabel("Confidence:", 100));
             paramPanel.Controls.Add(confidenceTrackBar);
             paramPanel.Controls.Add(confidenceValueLabel);
             
-            paramPanel.Controls.Add(new Label { Width = PARAM_SPACING });  // 間距
+            paramPanel.Controls.Add(new Label { Width = ModernUI.PaddingLarge });  // 間距
             
-            paramPanel.Controls.Add(CreateLabel("Pixel Confidence:"));
+            paramPanel.Controls.Add(CreateModernLabel("Pixel Confidence:", 120));
             paramPanel.Controls.Add(pixelConfidenceTrackBar);
             paramPanel.Controls.Add(pixelConfidenceValueLabel);
             
-            paramPanel.Controls.Add(new Label { Width = PARAM_SPACING });  // 間距
+            paramPanel.Controls.Add(new Label { Width = ModernUI.PaddingLarge });  // 間距
             
-            paramPanel.Controls.Add(CreateLabel("IoU:"));
+            paramPanel.Controls.Add(CreateModernLabel("IoU:", 60));
             paramPanel.Controls.Add(iouTrackBar);
             paramPanel.Controls.Add(iouValueLabel);
 
-            configTable.Controls.Add(paramPanel, 0, 3);
+            configTable.Controls.Add(paramPanel, 0, 4);
             configTable.SetColumnSpan(paramPanel, 2);
 
             configGroupBox.Controls.Add(configTable);
@@ -361,45 +621,78 @@ namespace IndustrySegSys
             buttonPanel = new FlowLayoutPanel
             {
                 Dock = DockStyle.Top,
-                Height = 50,
+                Height = 60,
                 FlowDirection = FlowDirection.LeftToRight,
-                Padding = new Padding(10)
+                Padding = new Padding(ModernUI.PaddingLarge),
+                BackColor = ModernUI.BackgroundCard,
+                Margin = new Padding(ModernUI.PaddingMedium, 0, ModernUI.PaddingMedium, ModernUI.PaddingSmall)
             };
 
-            startMonitorButton = new Button { Text = "開始監控", Width = 120, Height = 35, Font = new Font("Microsoft Sans Serif", 9F) };
+            startMonitorButton = CreateModernButton("▶ 開始監控", ModernUI.ButtonSuccess, Color.White, 130, 38);
             startMonitorButton.Click += StartMonitorButton_Click;
 
-            stopMonitorButton = new Button { Text = "停止監控", Width = 120, Height = 35, Enabled = false, Font = new Font("Microsoft Sans Serif", 9F) };
+            stopMonitorButton = CreateModernButton("⏹ 停止監控", ModernUI.ButtonDanger, Color.White, 130, 38);
+            stopMonitorButton.Enabled = false;
             stopMonitorButton.Click += StopMonitorButton_Click;
 
-            startButton = new Button { Text = "開始檢測", Width = 120, Height = 35, Visible = false, Font = new Font("Microsoft Sans Serif", 9F) };
+            startButton = new Button { Text = "開始檢測", Width = 120, Height = 35, Visible = false };
             // StartButton 已移除，現在使用獨立的處理按鈕
 
-            stopButton = new Button { Text = "停止檢測", Width = 120, Height = 35, Visible = false, Enabled = false, Font = new Font("Microsoft Sans Serif", 9F) };
+            stopButton = CreateModernButton("⏹ 停止檢測", ModernUI.ButtonDanger, Color.White, 130, 38);
+            stopButton.Visible = false;
+            stopButton.Enabled = false;
             stopButton.Click += StopButton_Click;
 
-            processSingleFileButton = new Button { Text = "處理單文件", Width = 120, Height = 35, Visible = false, Enabled = false, Font = new Font("Microsoft Sans Serif", 9F) };
+            processSingleFileButton = CreateModernButton("📄 處理單文件", ModernUI.ButtonPrimary, Color.White, 140, 38);
+            processSingleFileButton.Visible = false;
+            processSingleFileButton.Enabled = false;
             processSingleFileButton.Click += ProcessSingleFileButton_Click;
 
-            processBatchButton = new Button { Text = "批量處理", Width = 120, Height = 35, Visible = false, Enabled = false, Font = new Font("Microsoft Sans Serif", 9F) };
+            processBatchButton = CreateModernButton("📁 批量處理", ModernUI.ButtonPrimary, Color.White, 130, 38);
+            processBatchButton.Visible = false;
+            processBatchButton.Enabled = false;
             processBatchButton.Click += ProcessBatchButton_Click;
 
-            openOutputFolderButton = new Button { Text = "打開輸出文件夾", Width = 150, Height = 35, Font = new Font("Microsoft Sans Serif", 9F) };
+            openOutputFolderButton = CreateModernButton("📂 打開輸出文件夾", ModernUI.ButtonSecondary, ModernUI.TextPrimary, 160, 38);
             openOutputFolderButton.Click += OpenOutputFolderButton_Click;
 
             // JSON 產生選項
-            generateJsonRadio = new RadioButton { Text = "產生 JSON", Checked = true, AutoSize = true, Font = new Font("Microsoft Sans Serif", 9F) };
-            noJsonRadio = new RadioButton { Text = "不產生 JSON", AutoSize = true, Font = new Font("Microsoft Sans Serif", 9F) };
+            generateJsonRadio = new RadioButton 
+            { 
+                Text = "產生 JSON", 
+                Checked = true, 
+                AutoSize = true, 
+                Font = new Font("Segoe UI", 9F),
+                ForeColor = ModernUI.TextPrimary,
+                Padding = new Padding(ModernUI.PaddingSmall, 0, ModernUI.PaddingMedium, 0)
+            };
+            noJsonRadio = new RadioButton 
+            { 
+                Text = "不產生 JSON", 
+                AutoSize = true, 
+                Font = new Font("Segoe UI", 9F),
+                ForeColor = ModernUI.TextPrimary
+            };
 
             buttonPanel.Controls.Add(startMonitorButton);
+            buttonPanel.Controls.Add(new Label { Width = ModernUI.PaddingSmall }); // 間距
             buttonPanel.Controls.Add(stopMonitorButton);
+            buttonPanel.Controls.Add(new Label { Width = ModernUI.PaddingSmall }); // 間距
             buttonPanel.Controls.Add(startButton);
             buttonPanel.Controls.Add(stopButton);
             buttonPanel.Controls.Add(processSingleFileButton);
             buttonPanel.Controls.Add(processBatchButton);
+            buttonPanel.Controls.Add(new Label { Width = ModernUI.PaddingLarge }); // 間距
             buttonPanel.Controls.Add(openOutputFolderButton);
-            buttonPanel.Controls.Add(new Label { Width = 20 });  // 間距
-            buttonPanel.Controls.Add(new Label { Text = "JSON 選項:", AutoSize = true, Font = new Font("Microsoft Sans Serif", 9F), Padding = new Padding(0, 8, 0, 0) });
+            buttonPanel.Controls.Add(new Label { Width = ModernUI.PaddingLarge }); // 間距
+            buttonPanel.Controls.Add(new Label 
+            { 
+                Text = "JSON 選項:", 
+                AutoSize = true, 
+                Font = new Font("Segoe UI", 9F, FontStyle.Regular),
+                ForeColor = ModernUI.TextPrimary,
+                Padding = new Padding(0, 10, ModernUI.PaddingSmall, 0) 
+            });
             buttonPanel.Controls.Add(generateJsonRadio);
             buttonPanel.Controls.Add(noJsonRadio);
 
@@ -445,9 +738,12 @@ namespace IndustrySegSys
             // 上方：圖片預覽區域
             imagePreviewGroupBox = new GroupBox
             {
-                Text = "檢測結果預覽",
+                Text = "🖼️ 檢測結果預覽",
                 Dock = DockStyle.Fill,
-                Padding = new Padding(10)
+                Padding = new Padding(ModernUI.PaddingLarge),
+                BackColor = ModernUI.BackgroundCard,
+                ForeColor = ModernUI.TextPrimary,
+                Font = new Font("Segoe UI", 10F, FontStyle.Bold)
             };
 
             imageContainerPanel = new Panel
@@ -552,10 +848,13 @@ namespace IndustrySegSys
             // 統計信息
             statisticsGroupBox = new GroupBox
             {
-                Text = "統計信息",
+                Text = "📊 統計信息",
                 Dock = DockStyle.Fill,
-                Padding = new Padding(5),
-                Margin = new Padding(0, 0, 0, 10)
+                Padding = new Padding(ModernUI.PaddingMedium),
+                Margin = new Padding(0, 0, 0, ModernUI.PaddingSmall),
+                BackColor = ModernUI.BackgroundCard,
+                ForeColor = ModernUI.TextPrimary,
+                Font = new Font("Segoe UI", 10F, FontStyle.Bold)
             };
 
             var statsPanel = new TableLayoutPanel { Dock = DockStyle.Fill, RowCount = 4, ColumnCount = 2 };
@@ -566,39 +865,137 @@ namespace IndustrySegSys
             statsPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
             statsPanel.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50F));
 
-            totalCountLabel = new Label { Text = "總處理數: 0", Dock = DockStyle.Fill, Margin = new Padding(0, 0, 0, 10) };
+            totalCountLabel = new Label 
+            { 
+                Text = "總處理數: 0", 
+                Dock = DockStyle.Fill, 
+                Margin = new Padding(0, 0, 0, ModernUI.PaddingSmall),
+                ForeColor = ModernUI.TextPrimary,
+                Font = new Font("Segoe UI", 9F, FontStyle.Regular)
+            };
             statsPanel.Controls.Add(totalCountLabel, 0, 0);
             statsPanel.SetColumnSpan(totalCountLabel, 2);
 
-            // NG/OK 顯示框
-            var ngPanel = new Panel { Dock = DockStyle.Fill, BorderStyle = BorderStyle.FixedSingle, BackColor = Color.FromArgb(255, 230, 230), Padding = new Padding(10), Margin = new Padding(5) };
-            var ngLabel = new Label { Text = "NG", Font = new Font("Microsoft Sans Serif", 24F, FontStyle.Bold), ForeColor = Color.Red, Dock = DockStyle.Top, TextAlign = ContentAlignment.MiddleCenter };
-            ngCountLabel = new Label { Text = "0", Font = new Font("Microsoft Sans Serif", 36F, FontStyle.Bold), ForeColor = Color.Red, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleCenter };
-            var ngDescLabel = new Label { Text = "(檢測到目標)", Font = new Font("Microsoft Sans Serif", 9F), ForeColor = Color.Red, Dock = DockStyle.Bottom, TextAlign = ContentAlignment.MiddleCenter };
+            // NG/OK 顯示框 - 現代化卡片樣式
+            var ngPanel = new Panel 
+            { 
+                Dock = DockStyle.Fill, 
+                BorderStyle = BorderStyle.FixedSingle, 
+                BackColor = Color.FromArgb(254, 242, 242), 
+                Padding = new Padding(ModernUI.PaddingMedium), 
+                Margin = new Padding(ModernUI.PaddingSmall)
+            };
+            var ngLabel = new Label 
+            { 
+                Text = "❌ NG", 
+                Font = new Font("Segoe UI", 18F, FontStyle.Bold), 
+                ForeColor = ModernUI.AccentDanger, 
+                Dock = DockStyle.Top, 
+                TextAlign = ContentAlignment.MiddleCenter 
+            };
+            ngCountLabel = new Label 
+            { 
+                Text = "0", 
+                Font = new Font("Segoe UI", 32F, FontStyle.Bold), 
+                ForeColor = ModernUI.AccentDanger, 
+                Dock = DockStyle.Fill, 
+                TextAlign = ContentAlignment.MiddleCenter 
+            };
+            var ngDescLabel = new Label 
+            { 
+                Text = "(檢測到目標)", 
+                Font = new Font("Segoe UI", 8F), 
+                ForeColor = ModernUI.TextSecondary, 
+                Dock = DockStyle.Bottom, 
+                TextAlign = ContentAlignment.MiddleCenter 
+            };
             ngPanel.Controls.Add(ngLabel);
             ngPanel.Controls.Add(ngCountLabel);
             ngPanel.Controls.Add(ngDescLabel);
             statsPanel.Controls.Add(ngPanel, 0, 1);
 
-            var okPanel = new Panel { Dock = DockStyle.Fill, BorderStyle = BorderStyle.FixedSingle, BackColor = Color.FromArgb(230, 255, 230), Padding = new Padding(10), Margin = new Padding(5) };
-            var okLabel = new Label { Text = "OK", Font = new Font("Microsoft Sans Serif", 24F, FontStyle.Bold), ForeColor = Color.Green, Dock = DockStyle.Top, TextAlign = ContentAlignment.MiddleCenter };
-            okCountLabel = new Label { Text = "0", Font = new Font("Microsoft Sans Serif", 36F, FontStyle.Bold), ForeColor = Color.Green, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleCenter };
-            var okDescLabel = new Label { Text = "(未檢測到目標)", Font = new Font("Microsoft Sans Serif", 9F), ForeColor = Color.Green, Dock = DockStyle.Bottom, TextAlign = ContentAlignment.MiddleCenter };
+            var okPanel = new Panel 
+            { 
+                Dock = DockStyle.Fill, 
+                BorderStyle = BorderStyle.FixedSingle, 
+                BackColor = Color.FromArgb(240, 253, 244), 
+                Padding = new Padding(ModernUI.PaddingMedium), 
+                Margin = new Padding(ModernUI.PaddingSmall) 
+            };
+            var okLabel = new Label 
+            { 
+                Text = "✅ OK", 
+                Font = new Font("Segoe UI", 18F, FontStyle.Bold), 
+                ForeColor = ModernUI.AccentSuccess, 
+                Dock = DockStyle.Top, 
+                TextAlign = ContentAlignment.MiddleCenter 
+            };
+            okCountLabel = new Label 
+            { 
+                Text = "0", 
+                Font = new Font("Segoe UI", 32F, FontStyle.Bold), 
+                ForeColor = ModernUI.AccentSuccess, 
+                Dock = DockStyle.Fill, 
+                TextAlign = ContentAlignment.MiddleCenter 
+            };
+            var okDescLabel = new Label 
+            { 
+                Text = "(未檢測到目標)", 
+                Font = new Font("Segoe UI", 8F), 
+                ForeColor = ModernUI.TextSecondary, 
+                Dock = DockStyle.Bottom, 
+                TextAlign = ContentAlignment.MiddleCenter 
+            };
             okPanel.Controls.Add(okLabel);
             okPanel.Controls.Add(okCountLabel);
             okPanel.Controls.Add(okDescLabel);
             statsPanel.Controls.Add(okPanel, 1, 1);
 
-            var yieldPanel = new Panel { Dock = DockStyle.Fill, BorderStyle = BorderStyle.FixedSingle, BackColor = Color.FromArgb(230, 243, 255), Padding = new Padding(10), Margin = new Padding(5) };
-            var yieldLabel = new Label { Text = "良率", Font = new Font("Microsoft Sans Serif", 24F, FontStyle.Bold), ForeColor = Color.Blue, Dock = DockStyle.Top, TextAlign = ContentAlignment.MiddleCenter };
-            yieldRateLabel = new Label { Text = "0.00%", Font = new Font("Microsoft Sans Serif", 48F, FontStyle.Bold), ForeColor = Color.Blue, Dock = DockStyle.Fill, TextAlign = ContentAlignment.MiddleCenter };
+            var yieldPanel = new Panel 
+            { 
+                Dock = DockStyle.Fill, 
+                BorderStyle = BorderStyle.FixedSingle, 
+                BackColor = Color.FromArgb(239, 246, 255), 
+                Padding = new Padding(ModernUI.PaddingMedium), 
+                Margin = new Padding(ModernUI.PaddingSmall) 
+            };
+            var yieldLabel = new Label 
+            { 
+                Text = "📈 良率", 
+                Font = new Font("Segoe UI", 18F, FontStyle.Bold), 
+                ForeColor = ModernUI.AccentPrimary, 
+                Dock = DockStyle.Top, 
+                TextAlign = ContentAlignment.MiddleCenter 
+            };
+            yieldRateLabel = new Label 
+            { 
+                Text = "0.00%", 
+                Font = new Font("Segoe UI", 40F, FontStyle.Bold), 
+                ForeColor = ModernUI.AccentPrimary, 
+                Dock = DockStyle.Fill, 
+                TextAlign = ContentAlignment.MiddleCenter 
+            };
             yieldPanel.Controls.Add(yieldLabel);
             yieldPanel.Controls.Add(yieldRateLabel);
             statsPanel.Controls.Add(yieldPanel, 0, 2);
             statsPanel.SetColumnSpan(yieldPanel, 2);
 
-            currentMaterialLabel = new Label { Text = "當前料號: 無", Dock = DockStyle.Top, Margin = new Padding(0, 10, 0, 5) };
-            currentFileLabel = new Label { Text = "當前文件: 無", Dock = DockStyle.Top, Margin = new Padding(0, 5, 0, 0) };
+            currentMaterialLabel = new Label 
+            { 
+                Text = "當前料號: 無", 
+                Dock = DockStyle.Top, 
+                Margin = new Padding(0, ModernUI.PaddingSmall, 0, ModernUI.PaddingSmall / 2),
+                ForeColor = ModernUI.TextPrimary,
+                Font = new Font("Segoe UI", 9F)
+            };
+            currentFileLabel = new Label 
+            { 
+                Text = "當前文件: 無", 
+                Dock = DockStyle.Top, 
+                Margin = new Padding(0, ModernUI.PaddingSmall / 2, 0, 0),
+                ForeColor = ModernUI.TextPrimary,
+                Font = new Font("Segoe UI", 9F)
+            };
             var infoLabelsPanel = new Panel { Dock = DockStyle.Fill };
             infoLabelsPanel.Controls.Add(currentMaterialLabel);
             infoLabelsPanel.Controls.Add(currentFileLabel);
@@ -611,16 +1008,39 @@ namespace IndustrySegSys
             // 進度條（初始隱藏）
             progressGroupBox = new GroupBox
             {
-                Text = "處理進度",
+                Text = "⏳ 處理進度",
                 Dock = DockStyle.Fill,
                 Visible = false,
-                Padding = new Padding(5),
-                Margin = new Padding(0, 0, 0, 10)
+                Padding = new Padding(ModernUI.PaddingMedium),
+                Margin = new Padding(0, 0, 0, ModernUI.PaddingSmall),
+                BackColor = ModernUI.BackgroundCard,
+                ForeColor = ModernUI.TextPrimary,
+                Font = new Font("Segoe UI", 10F, FontStyle.Bold)
             };
 
-            progressBar = new ProgressBar { Dock = DockStyle.Top, Height = 20 };
-            progressTextLabel = new Label { Text = "0 / 0", Dock = DockStyle.Top, TextAlign = ContentAlignment.MiddleCenter, Margin = new Padding(0, 5, 0, 0) };
-            processingSpeedLabel = new Label { Text = "處理速度: --", Dock = DockStyle.Top, Margin = new Padding(0, 5, 0, 0) };
+            progressBar = new ProgressBar 
+            { 
+                Dock = DockStyle.Top, 
+                Height = 24,
+                Style = ProgressBarStyle.Continuous
+            };
+            progressTextLabel = new Label 
+            { 
+                Text = "0 / 0", 
+                Dock = DockStyle.Top, 
+                TextAlign = ContentAlignment.MiddleCenter, 
+                Margin = new Padding(0, ModernUI.PaddingSmall, 0, 0),
+                ForeColor = ModernUI.TextPrimary,
+                Font = new Font("Segoe UI", 9F, FontStyle.Bold)
+            };
+            processingSpeedLabel = new Label 
+            { 
+                Text = "處理速度: --", 
+                Dock = DockStyle.Top, 
+                Margin = new Padding(0, ModernUI.PaddingSmall / 2, 0, 0),
+                ForeColor = ModernUI.TextSecondary,
+                Font = new Font("Segoe UI", 8F)
+            };
 
             var progressPanel = new Panel { Dock = DockStyle.Fill };
             progressPanel.Controls.Add(progressBar);
@@ -632,8 +1052,12 @@ namespace IndustrySegSys
             // 日誌
             logGroupBox = new GroupBox
             {
-                Text = "日誌",
-                Dock = DockStyle.Fill
+                Text = "📝 日誌",
+                Dock = DockStyle.Fill,
+                BackColor = ModernUI.BackgroundCard,
+                ForeColor = ModernUI.TextPrimary,
+                Font = new Font("Segoe UI", 10F, FontStyle.Bold),
+                Padding = new Padding(ModernUI.PaddingMedium)
             };
 
             logTextBox = new TextBox
@@ -644,7 +1068,8 @@ namespace IndustrySegSys
                 ScrollBars = ScrollBars.Vertical,
                 Font = new Font("Consolas", 9F),
                 BackColor = Color.FromArgb(30, 30, 30),
-                ForeColor = Color.FromArgb(212, 212, 212)
+                ForeColor = Color.FromArgb(212, 212, 212),
+                BorderStyle = BorderStyle.FixedSingle
             };
 
             logGroupBox.Controls.Add(logTextBox);
@@ -656,9 +1081,12 @@ namespace IndustrySegSys
             // JSON 資訊顯示（右側）
             jsonInfoGroupBox = new GroupBox
             {
-                Text = "JSON 資訊",
+                Text = "📄 JSON 資訊",
                 Dock = DockStyle.Fill,
-                Padding = new Padding(10)
+                Padding = new Padding(ModernUI.PaddingLarge),
+                BackColor = ModernUI.BackgroundCard,
+                ForeColor = ModernUI.TextPrimary,
+                Font = new Font("Segoe UI", 10F, FontStyle.Bold)
             };
 
             jsonInfoTextBox = new TextBox
@@ -668,8 +1096,9 @@ namespace IndustrySegSys
                 Dock = DockStyle.Fill,
                 ScrollBars = ScrollBars.Vertical,
                 Font = new Font("Consolas", 9F),
-                BackColor = Color.FromArgb(250, 250, 250),
-                ForeColor = Color.FromArgb(50, 50, 50),
+                BackColor = ModernUI.BackgroundSecondary,
+                ForeColor = ModernUI.TextPrimary,
+                BorderStyle = BorderStyle.FixedSingle,
                 Text = "查無該 JSON 訊息"
             };
 
@@ -684,12 +1113,22 @@ namespace IndustrySegSys
 
         private void CreateStatusBar()
         {
-            statusStrip = new StatusStrip();
-
-            statusLabel = new ToolStripStatusLabel("就緒");
-            monitorStatusLabel = new ToolStripStatusLabel("監控狀態: 未啟動")
+            statusStrip = new StatusStrip
             {
-                ForeColor = Color.Gray
+                BackColor = ModernUI.BackgroundCard,
+                ForeColor = ModernUI.TextPrimary,
+                Font = new Font("Segoe UI", 9F)
+            };
+
+            statusLabel = new ToolStripStatusLabel("✅ 就緒")
+            {
+                ForeColor = ModernUI.TextPrimary,
+                Font = new Font("Segoe UI", 9F, FontStyle.Regular)
+            };
+            monitorStatusLabel = new ToolStripStatusLabel("📊 監控狀態: 未啟動")
+            {
+                ForeColor = ModernUI.TextSecondary,
+                Font = new Font("Segoe UI", 9F, FontStyle.Regular)
             };
 
             statusStrip.Items.Add(statusLabel);
