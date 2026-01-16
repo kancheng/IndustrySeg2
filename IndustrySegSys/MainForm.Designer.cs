@@ -93,6 +93,10 @@ namespace IndustrySegSys
         // SplitContainer 控件
         private SplitContainer mainSplitContainer;
         private SplitContainer rightSplitContainer;
+        private SplitContainer cameraPreviewSplitContainer; // 相機模式：左右分割（預覽 + 檢視）
+        private GroupBox cameraPreviewGroupBox; // 相機預覽區域
+        private Panel cameraPreviewContainerPanel; // 相機預覽容器
+        private Label cameraPreviewNoImageLabel; // 相機預覽無畫面標籤
 
         /// <summary>
         ///  Clean up any resources being used.
@@ -735,10 +739,102 @@ namespace IndustrySegSys
                 }
             };
 
-            // 上方：圖片預覽區域
+            // 上方：圖片預覽區域（包含相機預覽和檢視畫面）
+            // 創建相機模式的左右分割容器（初始隱藏，僅在相機模式時顯示）
+            cameraPreviewSplitContainer = new SplitContainer
+            {
+                Dock = DockStyle.Fill,
+                Orientation = Orientation.Vertical,
+                SplitterWidth = 5,
+                Panel1MinSize = 100,  // 降低最小尺寸，避免初始寬度不足時出錯
+                Panel2MinSize = 100,  // 降低最小尺寸，避免初始寬度不足時出錯
+                FixedPanel = FixedPanel.None,
+                Visible = false
+            };
+            
+            // 在首次顯示時設置合理的初始值，避免 SplitterDistance 錯誤
+            bool cameraSplitInitialized = false;
+            cameraPreviewSplitContainer.Resize += (s, e) =>
+            {
+                if (!cameraSplitInitialized && cameraPreviewSplitContainer.Visible && cameraPreviewSplitContainer.Width > 0)
+                {
+                    var minDistance = cameraPreviewSplitContainer.Panel1MinSize;
+                    var maxDistance = cameraPreviewSplitContainer.Width - cameraPreviewSplitContainer.Panel2MinSize;
+                    if (maxDistance > minDistance)
+                    {
+                        var safeDistance = System.Math.Max(minDistance, System.Math.Min(cameraPreviewSplitContainer.Width / 2, maxDistance));
+                        try
+                        {
+                            cameraPreviewSplitContainer.SplitterDistance = safeDistance;
+                            cameraSplitInitialized = true;
+                        }
+                        catch { }
+                    }
+                }
+            };
+            
+            // 在控件添加到父容器後，設置一個安全的初始 SplitterDistance
+            cameraPreviewSplitContainer.HandleCreated += (s, e) =>
+            {
+                try
+                {
+                    if (cameraPreviewSplitContainer.Width > 0)
+                    {
+                        var minDistance = cameraPreviewSplitContainer.Panel1MinSize;
+                        var maxDistance = cameraPreviewSplitContainer.Width - cameraPreviewSplitContainer.Panel2MinSize;
+                        if (maxDistance > minDistance)
+                        {
+                            var safeDistance = System.Math.Max(minDistance, System.Math.Min(cameraPreviewSplitContainer.Width / 2, maxDistance));
+                            cameraPreviewSplitContainer.SplitterDistance = safeDistance;
+                        }
+                    }
+                }
+                catch { }
+            };
+
+            // 左側：相機預覽區域
+            cameraPreviewGroupBox = new GroupBox
+            {
+                Text = "📷 相機預覽",
+                Dock = DockStyle.Fill,
+                Padding = new Padding(ModernUI.PaddingLarge),
+                BackColor = ModernUI.BackgroundCard,
+                ForeColor = ModernUI.TextPrimary,
+                Font = new Font("Segoe UI", 10F, FontStyle.Bold)
+            };
+
+            cameraPreviewContainerPanel = new Panel
+            {
+                Dock = DockStyle.Fill,
+                AutoScroll = true
+            };
+
+            cameraPreviewBox = new PictureBox
+            {
+                SizeMode = PictureBoxSizeMode.Zoom,
+                Dock = DockStyle.Fill
+            };
+
+            cameraPreviewNoImageLabel = new Label
+            {
+                Text = "相機未連接",
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleCenter,
+                Font = new Font("Microsoft Sans Serif", 18F),
+                ForeColor = Color.Gray
+            };
+
+            cameraPreviewContainerPanel.Controls.Add(cameraPreviewBox);
+            cameraPreviewContainerPanel.Controls.Add(cameraPreviewNoImageLabel);
+            cameraPreviewNoImageLabel.BringToFront();
+
+            cameraPreviewGroupBox.Controls.Add(cameraPreviewContainerPanel);
+            cameraPreviewSplitContainer.Panel1.Controls.Add(cameraPreviewGroupBox);
+
+            // 右側：檢測結果檢視區域
             imagePreviewGroupBox = new GroupBox
             {
-                Text = "🖼️ 檢測結果預覽",
+                Text = "🖼️ 檢測結果檢視",
                 Dock = DockStyle.Fill,
                 Padding = new Padding(ModernUI.PaddingLarge),
                 BackColor = ModernUI.BackgroundCard,
@@ -799,7 +895,12 @@ namespace IndustrySegSys
             imagePanel.Controls.Add(imageControlPanel, 0, 1);
 
             imagePreviewGroupBox.Controls.Add(imagePanel);
+            
+            // 初始狀態：非相機模式，直接顯示檢視區域（覆蓋整個 Panel1）
             mainSplitContainer.Panel1.Controls.Add(imagePreviewGroupBox);
+            mainSplitContainer.Panel1.Controls.Add(cameraPreviewSplitContainer);
+            
+            // 注意：相機模式時，imagePreviewGroupBox 的 Parent 會動態切換到 cameraPreviewSplitContainer.Panel2
 
             // 下方 SplitContainer：終端顯示和 JSON 檢視
             rightSplitContainer = new SplitContainer

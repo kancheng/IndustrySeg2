@@ -372,6 +372,10 @@ public MainForm()
                     // 斷開相機（如果已連接）
                     DisconnectCamera();
                     
+                    // 隱藏相機預覽分割容器，顯示單一檢視區域
+                    cameraPreviewSplitContainer.Visible = false;
+                    imagePreviewGroupBox.Parent = mainSplitContainer.Panel1;
+                    
                     // 在自動監控模式下，如果有處理過的圖片，顯示導航按鈕
                     UpdateImageNavigation();
                     
@@ -470,6 +474,11 @@ public MainForm()
                     
                     // 在手動模式下，如果有處理過的圖片，顯示導航按鈕
                     UpdateImageNavigation();
+                    
+                    // 隱藏相機預覽分割容器，顯示單一檢視區域
+                    cameraModePanel.Visible = false;
+                    cameraPreviewSplitContainer.Visible = false;
+                    imagePreviewGroupBox.Parent = mainSplitContainer.Panel1;
 
                     // 先調整 configGroupBox 高度（在刷新之前）
                     if (configGroupBox != null)
@@ -555,8 +564,32 @@ public MainForm()
                     processBatchButton.Visible = false;
                     progressGroupBox.Visible = false;
                     
-                    // 隱藏圖片導航按鈕（相機模式下不需要）
-                    imageControlPanel.Visible = false;
+                    // 顯示相機預覽分割容器，隱藏單一檢視區域
+                    imagePreviewGroupBox.Parent = cameraPreviewSplitContainer.Panel2;
+                    
+                    // 使用 BeginInvoke 確保在 UI 布局完成後再設置 Visible 和 SplitterDistance
+                    this.BeginInvoke(new Action(() =>
+                    {
+                        try
+                        {
+                            // 先確保 SplitContainer 有足夠的寬度
+                            if (cameraPreviewSplitContainer.Width <= 0)
+                            {
+                                // 如果寬度為 0，等待下一個消息循環
+                                this.BeginInvoke(new Action(() =>
+                                {
+                                    SetCameraSplitContainerVisible();
+                                }));
+                                return;
+                            }
+                            
+                            SetCameraSplitContainerVisible();
+                        }
+                        catch (Exception ex)
+                        {
+                            AddLog($"設置相機預覽分割容器時發生錯誤: {ex.Message}");
+                        }
+                    }));
                     
                     // 初始化相機列表
                     CheckForCameras();
@@ -586,6 +619,11 @@ public MainForm()
                 {
                     // 相機未連接，允許切換
                     cameraModePanel.Visible = false;
+                    
+                    // 隱藏相機預覽分割容器，顯示單一檢視區域
+                    cameraPreviewSplitContainer.Visible = false;
+                    imagePreviewGroupBox.Parent = mainSplitContainer.Panel1;
+                    
                     AddLog("已切換離開相機模式");
                 }
             }
@@ -2889,8 +2927,16 @@ private void InitSplitContainersSafe()
                     btnBurstCapture.Enabled = false;
                     lblCameraStatus.Text = "相機狀態: 未連接";
                     lblCameraStatus.ForeColor = Color.Gray;
-                    resultPictureBox.Image = null;
-                    noImageLabel.Visible = true;
+                    
+                    // 清除相機預覽畫面
+                    if (cameraPreviewBox != null)
+                    {
+                        var oldPreviewImage = cameraPreviewBox.Image;
+                        cameraPreviewBox.Image = null;
+                        oldPreviewImage?.Dispose();
+                        cameraPreviewNoImageLabel.Visible = true;
+                    }
+                    
                     AddLog("相機已斷開");
                 });
             }
@@ -2905,60 +2951,72 @@ private void InitSplitContainersSafe()
 
         private void VideoSource_NewFrame(object sender, NewFrameEventArgs eventArgs)
         {
+            // 檢查是否在相機模式
+            if (!cameraModeRadio.Checked || !cameraPreviewSplitContainer.Visible)
+            {
+                return;
+            }
+
             try
             {
+                // 立即 Clone 畫面，避免 eventArgs.Frame 被釋放
+                Bitmap? frameClone = null;
+                try
+                {
+                    frameClone = (Bitmap)eventArgs.Frame.Clone();
+                }
+                catch (Exception ex)
+                {
+                    InvokeUI(() =>
+                    {
+                        AddLog($"複製相機畫面失敗: {ex.Message}");
+                    });
+                    return;
+                }
+
                 // 異步更新當前畫面快照
                 _ = Task.Run(() =>
                 {
-                    Bitmap? clonedFrame = null;
                     try
                     {
-                        clonedFrame = (Bitmap)eventArgs.Frame.Clone();
+                        // 更新快照
+                        lock (_cameraFrameLock)
+                        {
+                            _currentCameraFrame?.Dispose();
+                            _currentCameraFrame = (Bitmap)frameClone.Clone();
+                        }
                     }
-                    catch
+                    catch (Exception ex)
                     {
-                        clonedFrame?.Dispose();
-                        return;
+                        InvokeUI(() =>
+                        {
+                            AddLog($"更新相機快照失敗: {ex.Message}");
+                        });
                     }
-
-                    // 更新快照
-                    lock (_cameraFrameLock)
+                    finally
                     {
-                        _currentCameraFrame?.Dispose();
-                        _currentCameraFrame = clonedFrame;
+                        // 釋放臨時 Clone
+                        frameClone?.Dispose();
                     }
                 });
 
-                // 更新預覽畫面（使用現有的 resultPictureBox）
+                // 更新預覽畫面（使用 cameraPreviewBox）
                 InvokeUI(() =>
                 {
                     try
                     {
-                        Bitmap? previewFrame = null;
-                        lock (_cameraFrameLock)
+                        if (cameraPreviewBox != null && frameClone != null)
                         {
-                            if (_currentCameraFrame != null)
-                            {
-                                previewFrame = (Bitmap)_currentCameraFrame.Clone();
-                            }
-                        }
-
-                        if (previewFrame == null)
-                        {
-                            previewFrame = (Bitmap)eventArgs.Frame.Clone();
-                        }
-
-                        if (previewFrame != null)
-                        {
-                            var oldImage = resultPictureBox.Image;
-                            resultPictureBox.Image = previewFrame;
+                            var oldImage = cameraPreviewBox.Image;
+                            cameraPreviewBox.Image = (Bitmap)frameClone.Clone();
                             oldImage?.Dispose();
-                            noImageLabel.Visible = false;
+                            cameraPreviewNoImageLabel.Visible = false;
                         }
                     }
-                    catch
+                    catch (Exception ex)
                     {
                         // 忽略錯誤，避免影響預覽
+                        AddLog($"更新預覽畫面失敗: {ex.Message}");
                     }
                 });
             }
@@ -3025,9 +3083,10 @@ private void InitSplitContainersSafe()
                     }
                 }
 
-                if (frameToProcess == null && resultPictureBox.Image != null)
+                // 如果快照不可用，嘗試從預覽畫面獲取
+                if (frameToProcess == null && cameraPreviewBox != null && cameraPreviewBox.Image != null)
                 {
-                    frameToProcess = (Bitmap)resultPictureBox.Image.Clone();
+                    frameToProcess = (Bitmap)cameraPreviewBox.Image.Clone();
                 }
 
                 if (frameToProcess != null)
@@ -3110,9 +3169,10 @@ private void InitSplitContainersSafe()
                         }
                     }
 
-                    if (currentFrameToProcess == null && resultPictureBox.Image != null)
+                    // 如果快照不可用，嘗試從預覽畫面獲取
+                    if (currentFrameToProcess == null && cameraPreviewBox != null && cameraPreviewBox.Image != null)
                     {
-                        currentFrameToProcess = (Bitmap)resultPictureBox.Image.Clone();
+                        currentFrameToProcess = (Bitmap)cameraPreviewBox.Image.Clone();
                     }
 
                     if (currentFrameToProcess != null)
@@ -3306,6 +3366,58 @@ private void InitSplitContainersSafe()
             catch
             {
                 return null;
+            }
+        }
+
+        private void SetCameraSplitContainerVisible()
+        {
+            try
+            {
+                if (cameraPreviewSplitContainer == null) return;
+                
+                // 確保 SplitContainer 有足夠的寬度
+                if (cameraPreviewSplitContainer.Width <= 0)
+                {
+                    // 如果寬度為 0，再次延遲執行
+                    this.BeginInvoke(new Action(() => SetCameraSplitContainerVisible()));
+                    return;
+                }
+                
+                // 計算安全的 SplitterDistance
+                var minDistance = cameraPreviewSplitContainer.Panel1MinSize;
+                var maxDistance = cameraPreviewSplitContainer.Width - cameraPreviewSplitContainer.Panel2MinSize;
+                
+                if (maxDistance <= minDistance)
+                {
+                    // 寬度不足，降低最小尺寸要求
+                    cameraPreviewSplitContainer.Panel1MinSize = Math.Max(50, cameraPreviewSplitContainer.Width / 4);
+                    cameraPreviewSplitContainer.Panel2MinSize = Math.Max(50, cameraPreviewSplitContainer.Width / 4);
+                    minDistance = cameraPreviewSplitContainer.Panel1MinSize;
+                    maxDistance = cameraPreviewSplitContainer.Width - cameraPreviewSplitContainer.Panel2MinSize;
+                }
+                
+                if (maxDistance > minDistance)
+                {
+                    // 設置安全的 SplitterDistance（居中）
+                    var safeDistance = Math.Max(minDistance, Math.Min(cameraPreviewSplitContainer.Width / 2, maxDistance));
+                    cameraPreviewSplitContainer.SplitterDistance = safeDistance;
+                }
+                
+                // 最後設置 Visible
+                cameraPreviewSplitContainer.Visible = true;
+            }
+            catch (Exception ex)
+            {
+                AddLog($"設置相機預覽分割容器時發生錯誤: {ex.Message}");
+                // 即使出錯也嘗試顯示
+                try
+                {
+                    if (cameraPreviewSplitContainer != null)
+                    {
+                        cameraPreviewSplitContainer.Visible = true;
+                    }
+                }
+                catch { }
             }
         }
 
