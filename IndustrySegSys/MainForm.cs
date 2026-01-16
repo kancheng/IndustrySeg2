@@ -29,7 +29,8 @@ namespace IndustrySegSys
 
         private Yolo? _yolo;
         private string? _currentModelPath; // 追蹤當前加載的模型路徑
-        private SegmentationDrawingOptions _drawingOptions = default!;
+        private SegmentationDrawingOptions _segmentationDrawingOptions = default!;
+        private DetectionDrawingOptions _detectionDrawingOptions = default!;
         private Bitmap? _currentResultBitmap;
         private List<Bitmap> _resultBitmaps = new List<Bitmap>();
         private List<string> _resultImagePaths = new List<string>(); // 追蹤每張圖片的輸出路徑
@@ -320,7 +321,8 @@ public MainForm()
 
         private void InitializeDrawingOptions()
         {
-            _drawingOptions = new SegmentationDrawingOptions
+            // 分割模型繪製選項
+            _segmentationDrawingOptions = new SegmentationDrawingOptions
             {
                 DrawBoundingBoxes = true,
                 DrawConfidenceScore = true,
@@ -334,6 +336,22 @@ public MainForm()
                 BorderThickness = 2,
                 BoundingBoxOpacity = 128,
                 DrawSegmentationPixelMask = true
+            };
+            
+            // 檢測模型繪製選項
+            _detectionDrawingOptions = new DetectionDrawingOptions
+            {
+                DrawBoundingBoxes = true,
+                DrawConfidenceScore = true,
+                DrawLabels = true,
+                EnableFontShadow = true,
+                Font = SKTypeface.Default,
+                FontSize = 18,
+                FontColor = SKColors.White,
+                DrawLabelBackground = true,
+                EnableDynamicScaling = true,
+                BorderThickness = 2,
+                BoundingBoxOpacity = 128
             };
         }
 
@@ -1613,12 +1631,32 @@ private async Task MonitorWorkerLoopAsync(CancellationToken ct)
                                 continue;
                             }
 
-                            // 運行檢測
+                            // 根據模型類型運行檢測
                             await _inferenceGate.WaitAsync(ct);
-                            List<YoloDotNet.Models.Segmentation> results;
+                            var modelType = _yolo!.OnnxModel.ModelType;
+                            int detectionCount = 0;
+                            object? detectionResults = null;
+                            
                             try
                             {
-                                results = _yolo!.RunSegmentation(image, confidence: confidence, pixelConfedence: pixelConfidence, iou: iou);
+                                if (modelType == ModelType.Segmentation)
+                                {
+                                    var results = _yolo.RunSegmentation(image, confidence: confidence, pixelConfedence: pixelConfidence, iou: iou);
+                                    detectionCount = results.Count;
+                                    detectionResults = results;
+                                    image.Draw(results, _segmentationDrawingOptions);
+                                }
+                                else if (modelType == ModelType.ObjectDetection)
+                                {
+                                    var results = _yolo.RunObjectDetection(image, confidence: confidence, iou: iou);
+                                    detectionCount = results.Count;
+                                    detectionResults = results;
+                                    image.Draw(results, _detectionDrawingOptions);
+                                }
+                                else
+                                {
+                                    throw new NotSupportedException($"不支持的模型類型: {modelType}");
+                                }
                             }
                             finally
                             {
@@ -1630,14 +1668,14 @@ private async Task MonitorWorkerLoopAsync(CancellationToken ct)
 
                             // 確定結果
                             string suffix;
-                            bool isNg = results.Count > 0;
+                            bool isNg = detectionCount > 0;
                             if (isNg)
                             {
                                 Interlocked.Increment(ref _ngCount);
                                 suffix = "NG";
                                 InvokeUI(() =>
                                 {
-                                    AddLog($"    -> 檢測到 {results.Count} 個目標，標記為 NG");
+                                    AddLog($"    -> 檢測到 {detectionCount} 個目標，標記為 NG");
                                 });
                             }
                             else
@@ -1649,9 +1687,6 @@ private async Task MonitorWorkerLoopAsync(CancellationToken ct)
                                     AddLog($"    -> 未檢測到目標，標記為 OK");
                                 });
                             }
-
-                            // 繪製結果
-                            image.Draw(results, _drawingOptions);
 
                             // 保存結果
                             var fileExtension = Path.GetExtension(imagePath);
@@ -1672,9 +1707,18 @@ private async Task MonitorWorkerLoopAsync(CancellationToken ct)
                                 shouldGenerateJson = generateJsonRadio.Checked;
                             });
 
-                            if (shouldGenerateJson)
+                            if (shouldGenerateJson && detectionResults != null)
                             {
-                                SaveJsonFile(outputPath, "MonitorMode", confidence, pixelConfidence, iou, results);
+                                if (modelType == ModelType.Segmentation)
+                                {
+                                    SaveJsonFileForSegmentation(outputPath, "MonitorMode", confidence, pixelConfidence, iou, 
+                                                                (List<YoloDotNet.Models.Segmentation>)detectionResults);
+                                }
+                                else if (modelType == ModelType.ObjectDetection)
+                                {
+                                    SaveJsonFileForDetection(outputPath, "MonitorMode", confidence, iou, 
+                                                            (List<YoloDotNet.Models.ObjectDetection>)detectionResults);
+                                }
                             }
 
                             Interlocked.Increment(ref _totalCount);
@@ -2326,12 +2370,32 @@ private async Task MonitorWorkerLoopAsync(CancellationToken ct)
                         throw new Exception($"無法加載圖片: {imagePath}");
                     }
 
-                    // 運行檢測
+                    // 根據模型類型運行檢測
                     await _inferenceGate.WaitAsync(cancellationToken);
-                    List<YoloDotNet.Models.Segmentation> results;
+                    var modelType = _yolo!.OnnxModel.ModelType;
+                    int detectionCount = 0;
+                    object? detectionResults = null;
+                    
                     try
                     {
-                        results = _yolo!.RunSegmentation(image, confidence: confidence, pixelConfedence: pixelConfidence, iou: iou);
+                        if (modelType == ModelType.Segmentation)
+                        {
+                            var results = _yolo.RunSegmentation(image, confidence: confidence, pixelConfedence: pixelConfidence, iou: iou);
+                            detectionCount = results.Count;
+                            detectionResults = results;
+                            image.Draw(results, _segmentationDrawingOptions);
+                        }
+                        else if (modelType == ModelType.ObjectDetection)
+                        {
+                            var results = _yolo.RunObjectDetection(image, confidence: confidence, iou: iou);
+                            detectionCount = results.Count;
+                            detectionResults = results;
+                            image.Draw(results, _detectionDrawingOptions);
+                        }
+                        else
+                        {
+                            throw new NotSupportedException($"不支持的模型類型: {modelType}");
+                        }
                     }
                     finally
                     {
@@ -2344,13 +2408,13 @@ private async Task MonitorWorkerLoopAsync(CancellationToken ct)
                     // 確定結果
                     string suffix;
                     _totalCount++;
-                    if (results.Count > 0)
+                    if (detectionCount > 0)
                     {
                         _ngCount++;
                         suffix = "NG";
                         InvokeUI(() =>
                         {
-                            AddLog($"  -> 檢測到 {results.Count} 個目標，標記為 NG");
+                            AddLog($"  -> 檢測到 {detectionCount} 個目標，標記為 NG");
                         });
                     }
                     else
@@ -2362,9 +2426,6 @@ private async Task MonitorWorkerLoopAsync(CancellationToken ct)
                             AddLog($"  -> 未檢測到目標，標記為 OK");
                         });
                     }
-
-                    // 繪製結果
-                    image.Draw(results, _drawingOptions);
 
                     // 保存結果
                     var fileExtension = Path.GetExtension(imagePath);
@@ -2381,9 +2442,18 @@ private async Task MonitorWorkerLoopAsync(CancellationToken ct)
                         shouldGenerateJson = generateJsonRadio.Checked;
                     });
 
-                    if (shouldGenerateJson)
+                    if (shouldGenerateJson && detectionResults != null)
                     {
-                        SaveJsonFile(outputPath, "ManualMode-SingleFile", confidence, pixelConfidence, iou, results);
+                        if (modelType == ModelType.Segmentation)
+                        {
+                            SaveJsonFileForSegmentation(outputPath, "ManualMode-SingleFile", confidence, pixelConfidence, iou, 
+                                                        (List<YoloDotNet.Models.Segmentation>)detectionResults);
+                        }
+                        else if (modelType == ModelType.ObjectDetection)
+                        {
+                            SaveJsonFileForDetection(outputPath, "ManualMode-SingleFile", confidence, iou, 
+                                                    (List<YoloDotNet.Models.ObjectDetection>)detectionResults);
+                        }
                     }
 
                     // 轉換為 Bitmap 並更新顯示
@@ -2480,12 +2550,32 @@ private async Task MonitorWorkerLoopAsync(CancellationToken ct)
                             continue;
                         }
 
-                        // 運行檢測
+                        // 根據模型類型運行檢測
                         await _inferenceGate.WaitAsync(cancellationToken);
-                        List<YoloDotNet.Models.Segmentation> results;
+                        var modelType = _yolo!.OnnxModel.ModelType;
+                        int detectionCount = 0;
+                        object? detectionResults = null;
+                        
                         try
                         {
-                            results = _yolo!.RunSegmentation(image, confidence: confidence, pixelConfedence: pixelConfidence, iou: iou);
+                            if (modelType == ModelType.Segmentation)
+                            {
+                                var results = _yolo.RunSegmentation(image, confidence: confidence, pixelConfedence: pixelConfidence, iou: iou);
+                                detectionCount = results.Count;
+                                detectionResults = results;
+                                image.Draw(results, _segmentationDrawingOptions);
+                            }
+                            else if (modelType == ModelType.ObjectDetection)
+                            {
+                                var results = _yolo.RunObjectDetection(image, confidence: confidence, iou: iou);
+                                detectionCount = results.Count;
+                                detectionResults = results;
+                                image.Draw(results, _detectionDrawingOptions);
+                            }
+                            else
+                            {
+                                throw new NotSupportedException($"不支持的模型類型: {modelType}");
+                            }
                         }
                         finally
                         {
@@ -2498,13 +2588,13 @@ private async Task MonitorWorkerLoopAsync(CancellationToken ct)
                         // 確定結果
                         string suffix;
                         _totalCount++;
-                        if (results.Count > 0)
+                        if (detectionCount > 0)
                         {
                             _ngCount++;
                             suffix = "NG";
                             InvokeUI(() =>
                             {
-                                AddLog($"  -> 檢測到 {results.Count} 個目標，標記為 NG");
+                                AddLog($"  -> 檢測到 {detectionCount} 個目標，標記為 NG");
                             });
                         }
                         else
@@ -2516,9 +2606,6 @@ private async Task MonitorWorkerLoopAsync(CancellationToken ct)
                                 AddLog($"  -> 未檢測到目標，標記為 OK");
                             });
                         }
-
-                        // 繪製結果
-                        image.Draw(results, _drawingOptions);
 
                         // 保存結果
                         var fileExtension = Path.GetExtension(imagePath);
@@ -2535,9 +2622,18 @@ private async Task MonitorWorkerLoopAsync(CancellationToken ct)
                             shouldGenerateJson = generateJsonRadio.Checked;
                         });
 
-                        if (shouldGenerateJson)
+                        if (shouldGenerateJson && detectionResults != null)
                         {
-                            SaveJsonFile(outputPath, "ManualMode-Batch", confidence, pixelConfidence, iou, results);
+                            if (modelType == ModelType.Segmentation)
+                            {
+                                SaveJsonFileForSegmentation(outputPath, "ManualMode-Batch", confidence, pixelConfidence, iou, 
+                                                            (List<YoloDotNet.Models.Segmentation>)detectionResults);
+                            }
+                            else if (modelType == ModelType.ObjectDetection)
+                            {
+                                SaveJsonFileForDetection(outputPath, "ManualMode-Batch", confidence, iou, 
+                                                        (List<YoloDotNet.Models.ObjectDetection>)detectionResults);
+                            }
                         }
 
                         processedCount++;
@@ -2626,7 +2722,7 @@ private async Task MonitorWorkerLoopAsync(CancellationToken ct)
             public double Confidence { get; set; }
         }
 
-        private void SaveJsonFile(string imageOutputPath, string mode, double confidence, double pixelConfidence, double iou, List<YoloDotNet.Models.Segmentation> results)
+        private void SaveJsonFileForSegmentation(string imageOutputPath, string mode, double confidence, double pixelConfidence, double iou, List<YoloDotNet.Models.Segmentation> results)
         {
             try
             {
@@ -2636,6 +2732,38 @@ private async Task MonitorWorkerLoopAsync(CancellationToken ct)
                     Mode = mode,
                     Confidence = confidence,
                     PixelConfidence = pixelConfidence,
+                    IoU = iou,
+                    DetectionCount = results.Count,
+                    Detections = results.Select(r => new DetectionInfo
+                    {
+                        Label = r.Label.Name,
+                        Confidence = r.Confidence
+                    }).ToList()
+                };
+
+                var options = new JsonSerializerOptions { WriteIndented = true };
+                var jsonContent = JsonSerializer.Serialize(jsonData, options);
+                File.WriteAllText(jsonPath, jsonContent);
+            }
+            catch (Exception ex)
+            {
+                InvokeUI(() =>
+                {
+                    AddLog($"保存 JSON 檔案失敗: {ex.Message}");
+                });
+            }
+        }
+
+        private void SaveJsonFileForDetection(string imageOutputPath, string mode, double confidence, double iou, List<YoloDotNet.Models.ObjectDetection> results)
+        {
+            try
+            {
+                var jsonPath = Path.ChangeExtension(imageOutputPath, ".json");
+                var jsonData = new DetectionResultJson
+                {
+                    Mode = mode,
+                    Confidence = confidence,
+                    PixelConfidence = 0, // 檢測模型不使用 pixelConfidence
                     IoU = iou,
                     DetectionCount = results.Count,
                     Detections = results.Select(r => new DetectionInfo
@@ -3250,6 +3378,15 @@ private void InitSplitContainersSafe()
         {
             try
             {
+                if (_yolo == null)
+                {
+                    InvokeUI(() =>
+                    {
+                        AddLog($"處理相機圖片時發生錯誤: 模型未加載");
+                    });
+                    return;
+                }
+
                 // 獲取參數
                 double confidence = 0.24;
                 double pixelConfidence = 0.5;
@@ -3263,13 +3400,39 @@ private void InitSplitContainersSafe()
 
                 var stopwatch = System.Diagnostics.Stopwatch.StartNew();
 
-                // 運行檢測
+                // 根據模型類型運行檢測
                 await _inferenceGate.WaitAsync();
-                List<YoloDotNet.Models.Segmentation> results;
+                var modelType = _yolo.OnnxModel.ModelType;
+                int detectionCount = 0;
+                object? detectionResults = null; // 用於保存結果以便後續保存 JSON
+                
                 try
                 {
-                    results = _yolo!.RunSegmentation(skBitmap, confidence: confidence, 
-                                                     pixelConfedence: pixelConfidence, iou: iou);
+                    if (modelType == ModelType.Segmentation)
+                    {
+                        // 分割模型
+                        var results = _yolo.RunSegmentation(skBitmap, confidence: confidence, 
+                                                             pixelConfedence: pixelConfidence, iou: iou);
+                        detectionCount = results.Count;
+                        detectionResults = results;
+                        
+                        // 繪製結果
+                        skBitmap.Draw(results, _segmentationDrawingOptions);
+                    }
+                    else if (modelType == ModelType.ObjectDetection)
+                    {
+                        // 檢測模型
+                        var results = _yolo.RunObjectDetection(skBitmap, confidence: confidence, iou: iou);
+                        detectionCount = results.Count;
+                        detectionResults = results;
+                        
+                        // 繪製結果
+                        skBitmap.Draw(results, _detectionDrawingOptions);
+                    }
+                    else
+                    {
+                        throw new NotSupportedException($"不支持的模型類型: {modelType}");
+                    }
                 }
                 finally
                 {
@@ -3281,14 +3444,14 @@ private void InitSplitContainersSafe()
 
                 // 確定結果
                 string suffix;
-                bool isNg = results.Count > 0;
+                bool isNg = detectionCount > 0;
                 if (isNg)
                 {
                     Interlocked.Increment(ref _ngCount);
                     suffix = "NG";
                     InvokeUI(() =>
                     {
-                        AddLog($"  -> {sourceName}: 檢測到 {results.Count} 個目標，標記為 NG");
+                        AddLog($"  -> {sourceName}: 檢測到 {detectionCount} 個目標，標記為 NG");
                     });
                 }
                 else
@@ -3301,13 +3464,31 @@ private void InitSplitContainersSafe()
                     });
                 }
 
-                // 繪製結果
-                skBitmap.Draw(results, _drawingOptions);
-
                 // 保存結果
                 var timestamp = DateTime.Now.ToString("yyyyMMdd_HHmmss_fff");
                 var fileName = $"camera_{sourceName}_{timestamp}_{suffix}.jpg";
                 var outputPath = Path.Combine(_outputFolder, fileName);
+                
+                // 保存 JSON 檔案（如果啟用）
+                bool shouldGenerateJson = false;
+                InvokeUI(() =>
+                {
+                    shouldGenerateJson = generateJsonRadio.Checked;
+                });
+                
+                if (shouldGenerateJson && detectionResults != null)
+                {
+                    if (modelType == ModelType.Segmentation)
+                    {
+                        SaveJsonFileForSegmentation(outputPath, sourceName, confidence, pixelConfidence, iou, 
+                                                    (List<YoloDotNet.Models.Segmentation>)detectionResults);
+                    }
+                    else if (modelType == ModelType.ObjectDetection)
+                    {
+                        SaveJsonFileForDetection(outputPath, sourceName, confidence, iou, 
+                                                (List<YoloDotNet.Models.ObjectDetection>)detectionResults);
+                    }
+                }
                 
                 // 確保輸出目錄存在
                 if (!Directory.Exists(_outputFolder))
@@ -3317,18 +3498,6 @@ private void InitSplitContainersSafe()
 
                 var encodedFormat = SKEncodedImageFormat.Jpeg;
                 skBitmap.Save(outputPath, encodedFormat, 80);
-
-                // 保存 JSON 檔案（如果啟用）
-                bool shouldGenerateJson = false;
-                InvokeUI(() =>
-                {
-                    shouldGenerateJson = generateJsonRadio.Checked;
-                });
-
-                if (shouldGenerateJson)
-                {
-                    SaveJsonFile(outputPath, sourceName, confidence, pixelConfidence, iou, results);
-                }
 
                 Interlocked.Increment(ref _totalCount);
 
