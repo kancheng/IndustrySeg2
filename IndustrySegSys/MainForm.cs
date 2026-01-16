@@ -371,6 +371,11 @@ public MainForm()
                     progressGroupBox.Visible = false;
                     // 斷開相機（如果已連接）
                     DisconnectCamera();
+                    
+                    // 在自動監控模式下，如果有處理過的圖片，顯示導航按鈕
+                    UpdateImageNavigation();
+                    
+                    AddLog("已切換到自動監控模式");
                 }
             };
 
@@ -462,6 +467,9 @@ public MainForm()
                     AddLog($"✓ progressGroupBox.Visible = {progressGroupBox.Visible}");
 
                     UpdateProcessButtonStates();
+                    
+                    // 在手動模式下，如果有處理過的圖片，顯示導航按鈕
+                    UpdateImageNavigation();
 
                     // 先調整 configGroupBox 高度（在刷新之前）
                     if (configGroupBox != null)
@@ -546,6 +554,9 @@ public MainForm()
                     processSingleFileButton.Visible = false;
                     processBatchButton.Visible = false;
                     progressGroupBox.Visible = false;
+                    
+                    // 隱藏圖片導航按鈕（相機模式下不需要）
+                    imageControlPanel.Visible = false;
                     
                     // 初始化相機列表
                     CheckForCameras();
@@ -862,6 +873,14 @@ private static async Task WaitFileReadyAsync(string path, CancellationToken ct)
         {
             InvokeUI(() =>
             {
+                // 在相機模式下，始終隱藏圖片導航按鈕
+                if (cameraModeRadio.Checked)
+                {
+                    imageControlPanel.Visible = false;
+                    return;
+                }
+                
+                // 在自動監控或手動模式下，根據圖片數量決定是否顯示
                 if (_resultBitmaps.Count <= 1)
                 {
                     imageControlPanel.Visible = false;
@@ -879,6 +898,29 @@ private static async Task WaitFileReadyAsync(string path, CancellationToken ct)
 
         private void BrowseModelButton_Click(object sender, EventArgs e)
         {
+            // 檢查相機是否已連接
+            if (_videoSource != null && _videoSource.IsRunning)
+            {
+                var result = MessageBox.Show(
+                    "相機目前正在連接中。\n\n切換模型需要先斷開相機連接。\n\n是否要斷開相機連接並繼續切換模型？",
+                    "相機連接中",
+                    MessageBoxButtons.YesNo,
+                    MessageBoxIcon.Question);
+                
+                if (result == DialogResult.Yes)
+                {
+                    // 用戶選擇斷開相機
+                    DisconnectCamera();
+                    AddLog("已斷開相機連接，準備切換模型");
+                }
+                else
+                {
+                    // 用戶取消，不進行模型切換
+                    AddLog("已取消模型切換");
+                    return;
+                }
+            }
+            
             using (var dialog = new OpenFileDialog())
             {
                 dialog.Filter = "ONNX模型文件 (*.onnx)|*.onnx|所有文件 (*.*)|*.*";
